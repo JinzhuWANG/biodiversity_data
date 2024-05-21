@@ -16,10 +16,9 @@ df['path'] = df['path'].str.replace('N:\\Data-Master\\', 'N:\\Planet-A\\Data-Mas
 
 
 out_base = 'N:/Planet-A/LUF-Modelling/LUTO2_JZ/biodiversity_data/data'
-exist_models = [os.path.basename(i)[4:-3] for i in glob(f'{out_base}/*.nc')]
-exist_models += ['GCM-Ensembles']
+exclud_model = ['GCM-Ensembles']
 
-df = df.query('model not in @exist_models')
+df = df.query('model not in @exclud_model')
 
 
 
