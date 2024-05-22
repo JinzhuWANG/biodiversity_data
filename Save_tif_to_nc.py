@@ -1,9 +1,9 @@
-from codes.helper_func import replace_with_nearest
+# from osgeo import gdal
 import rioxarray as rxr
 import xarray as xr
 import pandas as pd
 
-
+from codes.helper_func import replace_with_nearest
 
 
 # Load the csv file
