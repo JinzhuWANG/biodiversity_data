@@ -44,7 +44,7 @@ for idx, group in df.groupby('model'):
     chunk_size[y_idx], chunk_size[x_idx] = 128, 128
     
     # Create the encoding for writing
-    encoding = {'data': {"compression": "gzip", "compression_opts": 9, "chunksizes": chunk_size}}
+    encoding = {'data': {"compression": "gzip", "compression_opts": 9, "chunksizes": chunk_size, "dtype": 'int8'}}
     
     # Multi-threading to read TIF and expand dims
     para_obj = Parallel(n_jobs=-1, prefer="threads", return_as='generator')
