@@ -1,3 +1,4 @@
+from osgeo import gdal
 import rioxarray as rxr
 import xarray as xr
 import pandas as pd
@@ -9,13 +10,11 @@ from joblib import Parallel, delayed
 # Load the csv file
 df = pd.read_csv('data/all_suitability_tifs.csv')
 df = df.query('ssp != "historic"')
-df['path'] = df['path'].str.replace('N:\\Data-Master\\', 'N:\\Planet-A\\Data-Master\\')
 
 
-out_base = 'N:/Planet-A/LUF-Modelling/LUTO2_JZ/biodiversity_data/data'
+out_base = 'data'
 excl_models = ['GCM-Ensembles']
-
-df = df.query('model not in @excl_models')
+df = df.query('model in @excl_models')
 
 
 
