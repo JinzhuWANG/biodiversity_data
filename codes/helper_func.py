@@ -120,9 +120,9 @@ def find_str(row):
     if int(reg_year) < 2010:
         return ['historic', 'historic', reg_year, 'historic']
     
-    reg_model = re.compile(f'{row["species"]}_(.*)_ssp').findall(row['path'])[0]
-    reg_ssp = re.compile('_(ssp\d*)_').findall(row['path'])[0]
-    reg_mode = re.compile('km_(.*).tif').findall(row['path'])[0]
+    reg_model = re.compile(rf'{row["species"]}_(.*)_ssp').findall(row['path'])[0]
+    reg_ssp = re.compile(r'_(ssp\d*)_').findall(row['path'])[0]
+    reg_mode = re.compile(r'km_(.*).tif').findall(row['path'])[0]
     return [reg_model, reg_ssp, int(reg_year), reg_mode]
 
 

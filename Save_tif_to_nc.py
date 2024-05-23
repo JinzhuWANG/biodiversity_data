@@ -21,7 +21,7 @@ df = df.query('model in @excl_models')
 
 def process_row(row, dims=None):
     ds = rxr.open_rasterio(row['path'])
-    ds.values = replace_with_nearest(ds.values, ds.rio.nodata)
+    ds.values = replace_with_nearest(ds.values, ds.rio.nodata).astype('int8')
     dims = {k: [v] for k, v in dict(row).items() if k != 'path'} if dims is None else dims
     return ds.expand_dims(dims)
 
