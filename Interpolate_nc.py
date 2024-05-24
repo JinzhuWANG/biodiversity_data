@@ -5,6 +5,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
+ds = xr.open_dataset(r'N:\LUF-Modelling\LUTO2_JZ\biodiversity_data\data\bio_BCC.CSM2.MR.nc', engine='h5netcdf', chunks='auto')
+
+
+
+
+
 # Load the data
 f_base = 'N:/Planet-A/LUF-Modelling/LUTO2_JZ/biodiversity_data/data'
 all_tifs = pd.read_csv('data/all_suitability_tifs.csv')
@@ -40,7 +46,7 @@ select = {'group': ['amphibians'],
 f_nc = xr.open_dataset(f"{f_base}/bio_BCC.CSM2.MR.nc", engine='h5netcdf', chunks='auto')['data'].astype('int8')
 
 f_nc_sel = f_nc.sel(**select)
-f_nc_year = f_nc_sel.interp(year=[2030], 
+f_nc_year = f_nc_sel.interp(year=[2010], 
                             method='linear', 
                             kwargs={"fill_value": "extrapolate"},
                             x=np.linspace(f_nc.x.min(), f_nc.x.max(), len(f_nc.x) * 5),

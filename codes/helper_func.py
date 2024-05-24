@@ -115,7 +115,7 @@ def find_str(row):
     """
     
     
-    reg_year = re.compile('_(\d{4})_').findall(row['path'])[0]
+    reg_year = re.compile(r'_(\d{4})_').findall(row['path'])[0]
     
     if int(reg_year) < 2010:
         return ['historic', 'historic', reg_year, 'historic']
