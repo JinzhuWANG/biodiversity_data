@@ -18,17 +18,16 @@ out_base = 'data'
 
 
 
-def process_row(row, dims=None):
+def process_row(row):
     ds = rxr.open_rasterio(row['path'])
     ds.values = replace_with_nearest(ds.values, ds.rio.nodata).astype('int8')
-    dims = {k: [v] for k, v in dict(row).items() 
-            if k != 'path'}
+    dims = {k:[v] for k,v in dict(row).items() if k not in ['path', 'model', 'mode']}
     return ds.expand_dims(dims)
 
 
-def save_model(m, df, out_path, encoding):
+def save_model(df, out_path, encoding):
     # Multi-threading to read TIF and expand dims
-    para_obj = Parallel(n_jobs=-1, prefer="threads", return_as='generator')
+    para_obj = Parallel(n_jobs=30, prefer="threads", return_as='generator')
     tasks = (delayed(process_row)(row) for _, row in df.iterrows())
     pbar = tqdm(total=len(df))
     
@@ -38,23 +37,27 @@ def save_model(m, df, out_path, encoding):
         pbar.update(1)
 
     # Combine the data and write to nc
-    xr_chunk = xr.combine_by_coords(xr_chunk, fill_value=0)
+    xr_chunk = xr.combine_by_coords(xr_chunk, fill_value=0, combine_attrs='drop')
     xr_chunk.name = 'data'
     xr_chunk.to_netcdf(out_path, mode='w', encoding=encoding, engine='h5netcdf')
         
     pbar.close()
 
 
+
+
 # Loop through each model
-for idx, group in df.groupby('model'):
+for idx, group in df.groupby(['model','mode']):
+    
+    out_name = '_'.join(idx)
     
     # Get the output path and dims
-    out_path = f'{out_base}/bio_{idx}.nc'
+    out_path = f'{out_base}/bio_{out_name}.nc'
     encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'int8'}}
     
     # Check if the file already exists
     if os.path.exists(out_path):
-        print(f'{idx} already exists')
+        print(f'{out_name} already exists')
         continue
     
     # Save the model
@@ -62,7 +65,10 @@ for idx, group in df.groupby('model'):
     max_attempts = 10
     while not os.path.exists(out_path) and attempts < max_attempts:
         try:
-            save_model(idx, group, out_path, encoding)
+            save_model(group, out_path, encoding)
         except Exception as e:
-            print(f'Error in {idx}: {e}')
+            print(f'Error in {(out_name)}: {e}')
             attempts += 1
+            
+            
+            
