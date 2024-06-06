@@ -31,6 +31,11 @@ def process_row(row):
 
 
 for ssp, mode in product(ensemble_df['ssp'].unique(), ensemble_df['mode'].unique()):
+    
+    if os.path.exists(f'data/{ssp}_{mode}.nc'):
+        print(f'{ssp}_{mode}.nc already exists')
+        continue
+    
     # Filter the df
     in_df = ensemble_df.query(f'ssp == "{ssp}" and mode == "{mode}"')
  

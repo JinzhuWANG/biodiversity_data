@@ -5,16 +5,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-ds = xr.open_dataset('N:/LUF-Modelling/LUTO2_JZ/biodiversity_data/data/bio_BCC.CSM2.MR_EnviroSuit.nc', engine='h5netcdf', chunks='auto')
-
-
-
-
-
 # Load the data
-f_base = 'N:/Planet-A/LUF-Modelling/LUTO2_JZ/biodiversity_data/data'
-all_tifs = pd.read_csv('data/all_suitability_tifs.csv')
-
+ds = xr.open_dataset('data/ssp245_EnviroSuit.nc', engine='h5netcdf', chunks='auto')['data']
 
 
 # Load index
@@ -36,21 +28,17 @@ coord_sparse = get_coord(index_sparse)
 
 
 # Get the nc file with adjusted chunk sizes
-select = {'group': ['amphibians'], 
-          'species': ['Arenophryne_rotunda'], 
-          'ssp': ['ssp245'], 
-          }
+select = {
+    'species': ['Arenophryne_rotunda'],
+}
 
 
-
-f_nc = xr.open_dataset(f"{f_base}/bio_BCC.CSM2.MR.nc", engine='h5netcdf', chunks='auto')['data'].astype('int8')
-
-f_nc_sel = f_nc.sel(**select)
+f_nc_sel = ds.sel(**select)
 f_nc_year = f_nc_sel.interp(year=[2010], 
                             method='linear', 
                             kwargs={"fill_value": "extrapolate"},
-                            x=np.linspace(f_nc.x.min(), f_nc.x.max(), len(f_nc.x) * 5),
-                            y=np.linspace(f_nc.y.min(), f_nc.y.max(), len(f_nc.y) * 5)
+                            x=np.linspace(ds.x.min(), ds.x.max(), len(ds.x) * 5),
+                            y=np.linspace(ds.y.min(), ds.y.max(), len(ds.y) * 5)
             )
 
 f_nc_coords = f_nc_year.sel(x=coord_sparse[0], y=coord_sparse[1], method='nearest')
