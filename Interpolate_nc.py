@@ -5,7 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-ds = xr.open_dataset(r'N:\LUF-Modelling\LUTO2_JZ\biodiversity_data\data\bio_BCC.CSM2.MR.nc', engine='h5netcdf', chunks='auto')
+ds = xr.open_dataset('N:/LUF-Modelling/LUTO2_JZ/biodiversity_data/data/bio_BCC.CSM2.MR_EnviroSuit.nc', engine='h5netcdf', chunks='auto')
 
 
 
