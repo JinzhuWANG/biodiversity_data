@@ -3,6 +3,7 @@ import numpy as np
 
 from tqdm.auto import tqdm
 from joblib import Parallel, delayed
+from dask.diagnostics import ProgressBar
 
 
 # Load the data
@@ -10,7 +11,7 @@ ds_enssemble = xr.open_dataset('data/ssp245_EnviroSuit.nc', engine='h5netcdf', c
 ds_historic = xr.open_dataset('data/historic_historic.nc', engine='h5netcdf', chunks='auto')['data']
 
 # Split the ds into chunks at the species dimension
-chunk_size = 30
+chunk_size = 1000
 species_num = len(ds_enssemble['species'])
 species_chunks = np.array_split(np.arange(species_num), chunk_size)
 
@@ -41,17 +42,21 @@ def interp_sel(ds, up_scale=5, coord_x=coord_x, coord_y=coord_y):
         x=coord_x, 
         y=coord_y, 
         method='nearest')
+    
+    # Get the actual values
+    with ProgressBar():
+        val = ds_sel.compute()
 
-    return ds_sel.compute()
+    return val
 
 
 # Create tasks 
 tasks = [delayed(interp_sel)(ds.isel(species=species_chunk)) for species_chunk in species_chunks]
-para_obj = Parallel(n_jobs=chunk_size, return_as='generator')
+para_obj = Parallel(n_jobs=30, return_as='generator')
 
 # Parallel processing to get the interpolated values
 val_pts = []
-for out in tqdm(para_obj(tasks), total=len(species_chunks)):
+for out in tqdm(para_obj(tasks), total=len(tasks)):
     val_pts.append(out)
 
 val_pts = xr.combine_by_coords(val_pts)
