@@ -7,8 +7,6 @@ from dask.diagnostics import ProgressBar
 
 
 # Define parameters
-year_start = 2010
-year_end = 2100
 species_chunk_size = 1000
 
 
@@ -32,10 +30,9 @@ coord_x = xr.DataArray(coord_lon_lat[0], dims='points')
 coord_y = xr.DataArray(coord_lon_lat[1], dims='points')
 
 
-def interp_sel(ds, year, up_scale=5, coord_x=coord_x, coord_y=coord_y):
+def interp_sel(ds, up_scale=5, coord_x=coord_x, coord_y=coord_y):
     # Interpolate, filter and round
     ds_interp = ds.interp(
-        year=[year], 
         x=np.linspace(ds.x.min(), ds.x.max(), len(ds.x) * up_scale),
         y=np.linspace(ds.y.min(), ds.y.max(), len(ds.y) * up_scale),
         method='linear', 
@@ -55,25 +52,23 @@ def interp_sel(ds, year, up_scale=5, coord_x=coord_x, coord_y=coord_y):
     return val
 
 
+
 # Get the interpolated values for each year
-for year in range(year_start, year_end + 1):
-    
-    print(f"Processing year {year}")
+tasks = [delayed(interp_sel)(ds.isel(species=species_chunk)) for species_chunk in species_chunks]
+para_obj = Parallel(n_jobs=30, return_as='generator')
 
-    tasks = [delayed(interp_sel)(ds.isel(species=species_chunk), year) 
-            for species_chunk in species_chunks]
 
-    para_obj = Parallel(n_jobs=30, return_as='generator')
+# Parallel processing to get the interpolated values
+val_pts = []
+for out in tqdm(para_obj(tasks), total=len(tasks)):
+    val_pts.append(out)
 
-    # Parallel processing to get the interpolated values
-    val_pts = []
-    for out in tqdm(para_obj(tasks), total=len(tasks)):
-        val_pts.append(out)
 
 # Combine the results
 val_pts = xr.combine_by_coords(val_pts)
 val_pts.name = 'data'
 
+
 # Save to nc
 encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'int8'}} 
-val_pts.to_netcdf(f'data/bio_ensemble_interpolated.nc', mode='w', encoding=encoding, engine='h5netcdf')
+val_pts.to_netcdf('data/bio_ensemble_interpolated.nc', mode='w', encoding=encoding, engine='h5netcdf')
