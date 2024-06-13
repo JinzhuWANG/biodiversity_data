@@ -63,8 +63,33 @@ flattened_data['cell'] = range(mask.sum())
 
 
 
-# Save data
-encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'int8'}}
-flattened_data.to_netcdf('data/bio_ensemble_valid_cells.nc', mode='w', encoding=encoding, engine='h5netcdf')
 
-valide_cells.to_file('data/bio_valid_cells.geojson', driver='GeoJSON')
+
+# Read data
+valide_cells = valide_cells
+flattened_data = flattened_data
+
+coord_lon_lat = np.load("data/coord_lon_lat_res10.npy")
+points_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(coord_lon_lat[0], coord_lon_lat[1]))
+
+# Find the cell which has at leat one point in it
+joined_gdf = gpd.sjoin(valide_cells, points_gdf, how='left').dropna(subset=['index_right'])
+joined_gdf = joined_gdf.sort_values('index_right').reset_index(drop=True)
+joined_gdf = joined_gdf.rename(columns={'index_right': 'point_id'})
+joined_gdf[['cell_id', 'point_id']] = joined_gdf[['cell_id', 'point_id']].astype(np.int64)
+
+
+# Filter the cells from the biodiversity data
+cell_indices = joined_gdf['masked_cell_id'].unique()                    # Unique cell indices
+cell_value = flattened_data.sel(cell=cell_indices)
+cell_interp = cell_value.interp(
+    year=[2010], 
+    method='linear', 
+    kwargs={'fill_value': 'extrapolate'}).round().astype(np.int8)
+
+
+# Get the point values
+point_indices = joined_gdf['masked_cell_id'].values                     # All cell indices
+cell_val = cell_interp.sel(cell=point_indices)
+
+
