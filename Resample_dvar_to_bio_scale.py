@@ -35,8 +35,6 @@ nonag_dvar = nonag_dvar.reindex(lu=data.NON_AGRICULTURAL_LANDUSES)
 
 
 
-
-
 map_2d = []
 for i,j in product(ag_dvar['lm'].values, ag_dvar['lu'].values):
     map_ = ag_dvar.sel(lm=i, lu=j)

@@ -69,16 +69,16 @@ def combine_future_hist(nc_path: str, hist_path: str = 'data/historic_historic.n
 
 
 
-def get_bio_cells(bio_map:str, crs:str='epsg:4326') -> gpd.GeoDataFrame:
+def get_bio_cells(bio_map:str, crs:str='epsg:4328') -> gpd.GeoDataFrame:
     """
-    Retrieves the biodiversity cells from a given biodiversity map.
+    Vectorized a bio_map to individual cells.
 
     Parameters:
     bio_map (str): The file path of the biodiversity map.
-    crs (str, optional): The coordinate reference system of the output GeoDataFrame. Defaults to 'epsg:4326'.
+    crs (str, optional): The coordinate reference system of the output GeoDataFrame. Defaults to 'epsg:4328' (GDA 1994).
 
     Returns:
-    tuple: A tuple containing the cell map array and a GeoDataFrame of the cells.
+    tuple: A tuple containing the cell map array and its vectorized GeoDataFrame of each cell.
     """
 
     # Load a biodiversity map to retrieve the geo-information
@@ -93,13 +93,13 @@ def get_bio_cells(bio_map:str, crs:str='epsg:4326') -> gpd.GeoDataFrame:
 
 
 
-def coord_to_points(coord_path:str, crs:str='epsg:4326') -> gpd.GeoDataFrame:
+def coord_to_points(coord_path:str, crs:str='epsg:4328') -> gpd.GeoDataFrame:
     """
     Convert coordinate data to a GeoDataFrame of points.
 
     Parameters:
     coord_path (str): The file path to the coordinate data.
-    crs (str): The coordinate reference system (CRS) of the points. Default is 'epsg:4326'.
+    crs (str): The coordinate reference system (CRS) of the points. Default is 'epsg:4328' (GDA 1994).
 
     Returns:
     gpd.GeoDataFrame: A GeoDataFrame containing the points.
@@ -160,6 +160,25 @@ def match_lumap_biomap(
     res_factor:int, 
     lumap_tempelate:str='data/NLUM_2010-11_mask.tif', 
     biomap_tempelate:str='data/Arenophryne_rotunda_BCC.CSM2.MR_ssp126_2030_AUS_5km_EnviroSuit.tif')-> xr.DataArray:
+    """
+    Matches the map_ to the same projection and resolution as of biomap templates.
+    
+    If the map_ is not in the same resolution as the biomap, it will be upsampled to (1km x 1km) first.
+    
+    The resampling method is set to average, because the map_ is assumed to be the decision variables (float), 
+    representing the percentage of a given land-use within the cell.
+
+    Parameters:
+    - data (Data): The data object containing necessary information.
+    - map_ (np.ndarray): The map to be matched.
+    - res_factor (int): The resolution factor.
+    - lumap_tempelate (str): The path to the lumap template file. Default is 'data/NLUM_2010-11_mask.tif'.
+    - biomap_tempelate (str): The path to the biomap template file. Default is 'data/Arenophryne_rotunda_BCC.CSM2.MR_ssp126_2030_AUS_5km_EnviroSuit.tif'.
+
+    Returns:
+    - xr.DataArray: The matched map.
+
+    """
     
     NLUM = rxr.open_rasterio(lumap_tempelate, chunks='auto').squeeze('band').drop_vars('band')
     bio_map = rxr.open_rasterio(biomap_tempelate, chunks='auto').squeeze('band').drop_vars('band')
@@ -173,6 +192,7 @@ def match_lumap_biomap(
         np.place(empty_map, data.NLUM_MASK, data.LUMAP_NO_RESFACTOR) 
         np.place(empty_map, empty_map >=0, map_)
         map_ = empty_map
+        
     map_ = xr.DataArray(map_, dims=('y','x'), coords={'y': NLUM['y'], 'x': NLUM['x']})
     map_ = map_.where(map_>=0, 0)
     map_ = map_.rio.write_crs(NLUM.rio.crs)
