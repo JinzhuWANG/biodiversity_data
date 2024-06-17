@@ -16,6 +16,9 @@ bio_nc = glob('data/ssp*.nc')
 for nc in tqdm(bio_nc, total=len(bio_nc)):
     
     f_name = os.path.basename(nc)
+    if os.path.exists(f'data/masked_{f_name}'):
+        print(f'{f_name} already exists')
+        continue
 
     # Load the data
     ds = combine_future_hist(nc)

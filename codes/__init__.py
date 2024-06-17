@@ -2,9 +2,50 @@ import numpy as np
 import geopandas as gpd
 import pandas as pd
 import xarray as xr
+import rioxarray as rxr
 import rasterio
 
+from rasterio.enums import Resampling
 from rasterio.features import shapes
+from codes.fake_func import upsample_array, Data, get_coarse2D_map
+
+
+
+
+def ag_to_xr(data, dvar):
+    ag_dvar_xr = xr.DataArray(
+        dvar, 
+        dims=('lm', 'cell', 'lu'),
+        coords={
+            'lm': data.LANDMANS,
+            'cell': np.arange(dvar.shape[1]),
+            'lu': data.AGRICULTURAL_LANDUSES
+        }   
+    )
+    return ag_dvar_xr
+
+
+def am_to_xr(data, am, dvar):
+    am_dvar_xr = xr.DataArray(
+        dvar, 
+        dims=('lm', 'cell', 'lu'),
+        coords={
+            'lm': data.LANDMANS,
+            'cell': np.arange(dvar.shape[1]),
+            'lu': data.AGRICULTURAL_LANDUSES
+        }   
+    )
+    return am_dvar_xr.expand_dims({'am': [am]})
+
+def non_ag_to_xr(data, dvar):
+    non_ag_dvar_xr = xr.DataArray(
+        dvar, 
+        dims=('cell', 'lu'),
+        coords={
+                'cell': np.arange(dvar.shape[0]),
+                'lu': data.NON_AGRICULTURAL_LANDUSES}   
+    )
+    return non_ag_dvar_xr
 
 
 def combine_future_hist(nc_path: str, hist_path: str = 'data/historic_historic.nc'):
@@ -28,12 +69,13 @@ def combine_future_hist(nc_path: str, hist_path: str = 'data/historic_historic.n
 
 
 
-def get_bio_cells(bio_map:str) -> gpd.GeoDataFrame:
+def get_bio_cells(bio_map:str, crs:str='epsg:4326') -> gpd.GeoDataFrame:
     """
     Retrieves the biodiversity cells from a given biodiversity map.
 
     Parameters:
     bio_map (str): The file path of the biodiversity map.
+    crs (str, optional): The coordinate reference system of the output GeoDataFrame. Defaults to 'epsg:4326'.
 
     Returns:
     tuple: A tuple containing the cell map array and a GeoDataFrame of the cells.
@@ -47,7 +89,7 @@ def get_bio_cells(bio_map:str) -> gpd.GeoDataFrame:
     # Vectorize the map, each cell will have a unique id as the value    
     cell_map_arr = np.arange(src_arr.size).reshape(src_arr.shape)
     cells = ({'properties': {'cell_id': v}, 'geometry': s} for s, v in shapes(cell_map_arr, transform=transform))
-    return cell_map_arr, gpd.GeoDataFrame.from_features(list(cells))
+    return cell_map_arr, gpd.GeoDataFrame.from_features(list(cells)).set_crs(crs)
 
 
 
@@ -110,3 +152,31 @@ def mask_cells(ds: xr.Dataset, cell_arr: np.ndarray, joined_gdf: gpd.GeoDataFram
     flattened_data = flattened_data.drop_vars(['cell', 'y', 'x'])
     flattened_data['cell'] = range(mask.sum())
     return flattened_data
+
+
+def match_lumap_biomap(
+    data:Data, 
+    map_:np.ndarray, 
+    res_factor:int, 
+    lumap_tempelate:str='data/NLUM_2010-11_mask.tif', 
+    biomap_tempelate:str='data/Arenophryne_rotunda_BCC.CSM2.MR_ssp126_2030_AUS_5km_EnviroSuit.tif')-> xr.DataArray:
+    
+    NLUM = rxr.open_rasterio(lumap_tempelate, chunks='auto').squeeze('band').drop_vars('band')
+    bio_map = rxr.open_rasterio(biomap_tempelate, chunks='auto').squeeze('band').drop_vars('band')
+    bio_map = bio_map.rio.write_crs(NLUM.rio.crs)
+    
+    if res_factor > 1:   
+        map_ = get_coarse2D_map(data, map_)
+        map_ = upsample_array(data, map_, res_factor)
+    else:
+        empty_map = np.full(data.NLUM_MASK.shape, data.NODATA).astype(np.float32) 
+        np.place(empty_map, data.NLUM_MASK, data.LUMAP_NO_RESFACTOR) 
+        np.place(empty_map, empty_map >=0, map_)
+        map_ = empty_map
+    map_ = xr.DataArray(map_, dims=('y','x'), coords={'y': NLUM['y'], 'x': NLUM['x']})
+    map_ = map_.where(map_>=0, 0)
+    map_ = map_.rio.write_crs(NLUM.rio.crs)
+    map_ = map_.rio.write_transform(NLUM.rio.transform())  
+    map_ = map_.rio.reproject_match(bio_map, Resampling = Resampling.average, nodata=-1)
+    map_ = map_.where(map_ != map_.rio.nodata, 0)
+    return map_
