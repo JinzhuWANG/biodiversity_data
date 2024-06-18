@@ -153,6 +153,68 @@ def mask_cells(ds: xr.Dataset, cell_arr: np.ndarray, joined_gdf: gpd.GeoDataFram
     flattened_data['cell'] = range(mask.sum())
     return flattened_data
 
+def get_id_map_by_upsample_reproject(low_res_map, high_res_map, low_res_crs, low_res_trans):
+    """
+    Upsamples and reprojects a low-resolution map to match the resolution and 
+    coordinate reference system (CRS) of a high-resolution map.
+    
+    Parameters:
+        low_res_map (2D xarray.DataArray): The low-resolution map to upsample and reproject. Should at least has the affine transformation.
+        high_res_map (2D xarray.DataArray): The high-resolution map to match the resolution and CRS to. Must have CRS and affine transformation.
+        low_res_crs (str): The CRS of the low-resolution map.
+        low_res_trans (affine.Affine): The affine transformation of the low-resolution map.
+    
+    Returns:
+        xarray.DataArray: The upsampled and reprojected map with the same CRS and resolution as the high-resolution map.
+    """
+    low_res_id_map = np.arange(low_res_map.size).reshape(low_res_map.shape)
+    low_res_id_map = xr.DataArray(
+        low_res_id_map, 
+        dims=['y', 'x'], 
+        coords={'y': low_res_map.coords['y'], 'x': low_res_map.coords['x']})
+    
+    low_res_id_map = low_res_id_map.rio.write_crs(low_res_crs)
+    low_res_id_map = low_res_id_map.rio.write_transform(low_res_trans)
+    low_res_id_map = low_res_id_map.rio.reproject_match(
+        high_res_map, 
+        Resampling = Resampling.nearest, 
+        nodata=low_res_map.size + 1).chunk('auto')
+    
+    return low_res_id_map
+    
+
+
+def bincount_avg(mask_arr, weight_arr, low_res_xr: xr.DataArray=None):
+    """
+    Calculate the average of weighted values based on bin counts.
+
+    Parameters:
+    - mask_arr (2D, xarray.DataArray): Array containing the mask values.
+    - weight_arr (2D, xarray.DataArray): Array containing the weight values.
+    - low_res_xr (2D, xarray.DataArray, optional): Low-resolution array containing 
+        `y`, `x`, CRS, and transform to restore the bincount stats.
+
+    Returns:
+    - bin_avg (xarray.DataArray): Array containing the average values based on bin counts.
+    """
+    bin_sum = np.bincount(mask_arr.values.flatten(), weights=weight_arr.values.flatten(), minlength=low_res_xr.size)
+    bin_occ = np.bincount(mask_arr.values.flatten(), weights=weight_arr.values.flatten() > 0, minlength=low_res_xr.size)
+    
+    with np.errstate(divide='ignore', invalid='ignore'):
+        bin_avg = (bin_sum / bin_occ).reshape(low_res_xr.shape).astype(np.float32)
+        bin_avg = np.nan_to_num(bin_avg)
+        
+    bin_avg = xr.DataArray(
+        bin_avg, 
+        dims=('y', 'x'), 
+        coords={'y': low_res_xr['y'], 'x': low_res_xr['x']})
+    
+    bin_avg = bin_avg.rio.write_crs(low_res_xr.rio.crs)
+    bin_avg = bin_avg.rio.write_transform(low_res_xr.rio.transform())
+    
+    return bin_avg
+
+
 
 def match_lumap_biomap(
     data:Data, 
@@ -197,6 +259,11 @@ def match_lumap_biomap(
     map_ = map_.where(map_>=0, 0)
     map_ = map_.rio.write_crs(NLUM.rio.crs)
     map_ = map_.rio.write_transform(NLUM.rio.transform())  
-    map_ = map_.rio.reproject_match(bio_map, Resampling = Resampling.average, nodata=-1)
+    # map_ = map_.rio.reproject_match(bio_map, Resampling = Resampling.average, nodata=-1)
+    
+    bio_id_map = get_id_map_by_upsample_reproject(bio_map, NLUM, NLUM.rio.crs, bio_map.rio.transform())
+    map_ = bincount_avg(bio_id_map, map_,  bio_map)
     map_ = map_.where(map_ != map_.rio.nodata, 0)
     return map_
+
+
