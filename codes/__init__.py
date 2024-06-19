@@ -189,26 +189,37 @@ def bincount_avg(mask_arr, weight_arr, low_res_xr: xr.DataArray=None):
     Calculate the average of weighted values based on bin counts.
 
     Parameters:
-    - mask_arr (2D, xarray.DataArray): Array containing the mask values.
-    - weight_arr (2D, xarray.DataArray): Array containing the weight values.
-    - low_res_xr (2D, xarray.DataArray, optional): Low-resolution array containing 
-        `y`, `x`, CRS, and transform to restore the bincount stats.
+    - mask_arr (2D, xarray.DataArray): Array containing the mask values. 
+    - weight_arr (2D, xarray.DataArray, >0 values are valid): Array containing the weight values.
+    - low_res_xr (2D, xarray.DataArray): Low-resolution array containing 
+        `y`, `x`, `CRS`, and `transform` to restore the bincount stats.
 
     Returns:
     - bin_avg (xarray.DataArray): Array containing the average values based on bin counts.
     """
     bin_sum = np.bincount(mask_arr.values.flatten(), weights=weight_arr.values.flatten(), minlength=low_res_xr.size)
     bin_occ = np.bincount(mask_arr.values.flatten(), weights=weight_arr.values.flatten() > 0, minlength=low_res_xr.size)
-    
+
+    # Take values up to the last valid index, because the index of `low_res_xr.size + 1` indicates `NODATA`
+    bin_sum = bin_sum[:low_res_xr.size + 1]     
+    bin_occ = bin_occ[:low_res_xr.size + 1]     
+
+    # Calculate the average value of each bin
     with np.errstate(divide='ignore', invalid='ignore'):
         bin_avg = (bin_sum / bin_occ).reshape(low_res_xr.shape).astype(np.float32)
         bin_avg = np.nan_to_num(bin_avg)
         
+    # Restore the bincount stats to the low-resolution array    
     bin_avg = xr.DataArray(
         bin_avg, 
-        dims=('y', 'x'), 
-        coords={'y': low_res_xr['y'], 'x': low_res_xr['x']})
+        dims=low_res_xr.dims, 
+        coords=low_res_xr.coords)
+
+    # Expand the dimensions of the bin_avg array to match the original weight_arr
+    append_dims = {dim: weight_arr[dim] for dim in weight_arr.dims if dim not in bin_avg.dims}
+    bin_avg = bin_avg.expand_dims(append_dims)
     
+    # Write the CRS and transform to the output array
     bin_avg = bin_avg.rio.write_crs(low_res_xr.rio.crs)
     bin_avg = bin_avg.rio.write_transform(low_res_xr.rio.transform())
     
@@ -232,7 +243,7 @@ def match_lumap_biomap(
 
     Parameters:
     - data (Data): The data object containing necessary information.
-    - map_ (np.ndarray): The map to be matched.
+    - map_ (1D, np.ndarray): The map to be matched.
     - res_factor (int): The resolution factor.
     - lumap_tempelate (str): The path to the lumap template file. Default is 'data/NLUM_2010-11_mask.tif'.
     - biomap_tempelate (str): The path to the biomap template file. Default is 'data/Arenophryne_rotunda_BCC.CSM2.MR_ssp126_2030_AUS_5km_EnviroSuit.tif'.
@@ -259,7 +270,6 @@ def match_lumap_biomap(
     map_ = map_.where(map_>=0, 0)
     map_ = map_.rio.write_crs(NLUM.rio.crs)
     map_ = map_.rio.write_transform(NLUM.rio.transform())  
-    # map_ = map_.rio.reproject_match(bio_map, Resampling = Resampling.average, nodata=-1)
     
     bio_id_map = get_id_map_by_upsample_reproject(bio_map, NLUM, NLUM.rio.crs, bio_map.rio.transform())
     map_ = bincount_avg(bio_id_map, map_,  bio_map)

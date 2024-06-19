@@ -14,19 +14,18 @@ from scipy.ndimage import distance_transform_edt
 from tqdm.auto import tqdm
 
 
-def replace_with_nearest(map_: np.ndarray, filler: int) -> np.ndarray:
+def replace_mask_with_nearest(map_: np.ndarray, mask) -> np.ndarray:
     """
     Replaces invalid values in the input array with the nearest non-filler values.
 
     Parameters:
         map_ (np.ndarray, 2D): The input array.
-        filler (int): The value to be considered as invalid.
+        mask (np.ndarray, bool): The boolean mask indicating the invalid values in the input array.
 
     Returns:
         np.ndarray (2D): The array with invalid values replaced by the nearest non-invalid values.
     """
-    # Create a mask for invalid values
-    mask = (map_ == filler)
+
     # Perform distance transform on the mask
     _, nearest_indices = distance_transform_edt(mask, return_indices=True)
     # Replace the invalid values with the nearest non-invalid values
