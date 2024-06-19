@@ -10,18 +10,19 @@ from codes import(combine_future_hist,
 
 
 # Get all biodiversity data
-bio_nc = glob('data/ssp*.nc')
+bio_path= 'data/bio_nc_condition' # ['data/bio_nc_raw', ''data/bio_nc_condition']
+bio_nc = glob(f'{bio_path}/ssp*.nc')
 
 
 for nc in tqdm(bio_nc, total=len(bio_nc)):
     
     f_name = os.path.basename(nc)
-    if os.path.exists(f'data/masked_{f_name}'):
+    if os.path.exists(f'{bio_path}/masked_{f_name}'):
         print(f'{f_name} already exists')
         continue
 
     # Load the data
-    ds = combine_future_hist(nc)
+    ds = combine_future_hist(nc, hist_path=f'{bio_path}/historic_historic.nc')
     cell_arr, cell_df = get_bio_cells('data/Arenophryne_rotunda_BCC.CSM2.MR_ssp126_2030_AUS_5km_EnviroSuit.tif')
     points_gdf = coord_to_points("data/coord_lon_lat_res1.npy")
 
@@ -39,5 +40,5 @@ for nc in tqdm(bio_nc, total=len(bio_nc)):
         valide_cells.to_file('data/bio_valid_cells.geojson', driver='GeoJSON')
 
     encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'int8'}}
-    masked_cell.to_netcdf(f'data/masked_{f_name}', mode='w', encoding=encoding, engine='h5netcdf')
+    masked_cell.to_netcdf(f'{bio_path}/masked_{f_name}', mode='w', encoding=encoding, engine='h5netcdf')
 
