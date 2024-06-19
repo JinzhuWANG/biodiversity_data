@@ -12,7 +12,7 @@ from codes import(combine_future_hist,
 # Get all biodiversity data
 bio_path= 'data/bio_nc_condition' # ['data/bio_nc_raw', ''data/bio_nc_condition']
 bio_nc = glob(f'{bio_path}/ssp*.nc')
-
+dtype = 'int8' if 'raw' in bio_path else 'float32'
 
 for nc in tqdm(bio_nc, total=len(bio_nc)):
     
@@ -39,6 +39,7 @@ for nc in tqdm(bio_nc, total=len(bio_nc)):
         valide_cells['masked_cell_id'] = range(valide_cells.shape[0])
         valide_cells.to_file('data/bio_valid_cells.geojson', driver='GeoJSON')
 
-    encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'int8'}}
+    encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": dtype}}
     masked_cell.to_netcdf(f'{bio_path}/masked_{f_name}', mode='w', encoding=encoding, engine='h5netcdf')
+
 

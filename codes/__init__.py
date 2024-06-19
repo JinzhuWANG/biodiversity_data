@@ -143,15 +143,23 @@ def mask_cells(ds: xr.Dataset, cell_arr: np.ndarray, joined_gdf: gpd.GeoDataFram
     """
     indices_cell = joined_gdf['cell_id'].unique()
 
+    # Get the 2D mask array where True values indicate the cell indices to keep
     mask = np.isin(cell_arr, indices_cell)
+    
+    # Flatten the 2D mask array to 1D and keep the x/y coordinates coordinates under the dimension 'cell'
     mask_da = xr.DataArray(mask, dims=['y', 'x'], coords={'y': ds.coords['y'], 'x': ds.coords['x']})
     mask_da = mask_da.stack(cell=('y', 'x'))
 
+    # Flatten the dataset to 1D and keep the xy coordinates under the dimension 'cell'
     stacked_data = ds.stack(cell=('y', 'x'))
-    flattened_data = stacked_data.where(mask_da, drop=True).astype(np.int8)
+    
+    # Apply the mask to the flattened dataset
+    flattened_data = stacked_data.where(mask_da, drop=True).astype(ds.dtype)
     flattened_data = flattened_data.drop_vars(['cell', 'y', 'x'])
     flattened_data['cell'] = range(mask.sum())
     return flattened_data
+
+
 
 def get_id_map_by_upsample_reproject(low_res_map, high_res_map, low_res_crs, low_res_trans):
     """
