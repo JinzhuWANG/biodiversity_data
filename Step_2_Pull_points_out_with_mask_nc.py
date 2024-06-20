@@ -1,4 +1,5 @@
 import os
+import xarray as xr
 
 from glob import glob
 from tqdm.auto import tqdm
@@ -33,6 +34,17 @@ for nc in tqdm(bio_nc, total=len(bio_nc)):
 
 
     # Save data
+    if not os.path.exists('data/bio_area_ha.nc'):
+        cell_df_albers = cell_df.to_crs('EPSG:3577') # GDA94 / Australian Albers
+        cell_df_albers['area'] = cell_df_albers.area / 10000
+        area_arr = cell_df_albers['area'].values.reshape(cell_arr.shape)
+        area_arr = xr.DataArray(area_arr, dims=['y', 'x'], coords={'y': ds['y'], 'x': ds['x']})
+        area_arr.name = 'data'
+        area_arr.to_netcdf(
+            'data/bio_area_ha.nc', 
+            mode='w', 
+            encoding={'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'float32'}}, engine='h5netcdf')
+    
     if not os.path.exists('data/bio_valid_cells.geojson'):
         indices_cell = joined_gdf['cell_id'].unique()
         valide_cells = cell_df.query('cell_id in @indices_cell').copy()

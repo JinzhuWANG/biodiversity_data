@@ -24,8 +24,9 @@ def select_points(ds):
 
 
 # Read data
-valide_cells_xr = xr.open_dataset('data/masked_ssp245_EnviroSuit.nc', chunks='auto')['data']
-valide_cells_df = gpd.read_file('data/bio_valid_cells.geojson', use_arrow=True)
+bio_path = 'data/bio_nc_raw/masked_ssp245_EnviroSuit.nc' # ['data/bio_nc_raw/masked_ssp245_EnviroSuit.nc', 'data/bio_nc_raw/masked_ssp245_EnviroConditionRatio.nc']
+valide_cells_xr = xr.open_dataset(bio_path, chunks='auto')['data']
+valide_cells_df = gpd.read_file('data/bio_valid_cells.geojson').set_crs('EPSG:4283', allow_override=True) # Reading from geojson loses the crs, so we need to set it again
 points_gdf = coord_to_points("data/coord_lon_lat_res1.npy")
 
 # Split the data into chunks at the species level

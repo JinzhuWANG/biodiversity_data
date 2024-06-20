@@ -69,13 +69,13 @@ def combine_future_hist(nc_path: str, hist_path: str = 'data/historic_historic.n
 
 
 
-def get_bio_cells(bio_map:str, crs:str='epsg:4328') -> gpd.GeoDataFrame:
+def get_bio_cells(bio_map:str, crs:str='epsg:4283') -> gpd.GeoDataFrame:
     """
     Vectorized a bio_map to individual cells.
 
     Parameters:
     bio_map (str): The file path of the biodiversity map.
-    crs (str, optional): The coordinate reference system of the output GeoDataFrame. Defaults to 'epsg:4328' (GDA 1994).
+    crs (str, optional): The coordinate reference system of the output GeoDataFrame. Defaults to 'epsg:4283' (GDA 1994).
 
     Returns:
     tuple: A tuple containing the cell map array and its vectorized GeoDataFrame of each cell.
@@ -93,13 +93,13 @@ def get_bio_cells(bio_map:str, crs:str='epsg:4328') -> gpd.GeoDataFrame:
 
 
 
-def coord_to_points(coord_path:str, crs:str='epsg:4328') -> gpd.GeoDataFrame:
+def coord_to_points(coord_path:str, crs:str='epsg:4283') -> gpd.GeoDataFrame:
     """
     Convert coordinate data to a GeoDataFrame of points.
 
     Parameters:
     coord_path (str): The file path to the coordinate data.
-    crs (str): The coordinate reference system (CRS) of the points. Default is 'epsg:4328' (GDA 1994).
+    crs (str): The coordinate reference system (CRS) of the points. Default is 'epsg:4283' (GDA 1994).
 
     Returns:
     gpd.GeoDataFrame: A GeoDataFrame containing the points.
