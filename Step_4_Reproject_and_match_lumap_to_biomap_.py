@@ -39,7 +39,6 @@ if num_non_ag + num_ag != num_total:
     raise ValueError(f'The sum of `non-ag cells` ({num_non_ag}) and `ag cells` {num_ag} is not equal to the `total cells` ({num_total}).')
 
 
-
 # Reproject and resample the non-ag map to the bio_map resolution 
 mask_id = get_id_map_by_upsample_reproject(bio_map, NLUM, NLUM.rio.crs, bio_map.rio.transform()) # Upsample and reproject bio_map to the same CRS and resolution as NLUM
 
@@ -62,7 +61,26 @@ lumap_xr.to_netcdf(f'data/lumap_2d_all_lucc_5km.nc', mode='w', encoding=encoding
 
 
 
+# Sanity check
+if __name__ == '__main__':
+    
+    # Save lumap_1km to tif
+    ag_xr.sum('PRIMARY_V7').astype(np.int8).rio.write_nodata(-1).rio.to_raster('data/ag_mask.tif')
+    ag_xr.sum(['PRIMARY_V7','LU_DESC']).astype(np.int8).rio.write_nodata(-1).rio.to_raster('data/ag_mask_sum.tif')
+    
+    non_ag_xr.sum('PRIMARY_V7').astype(np.int8).rio.write_nodata(-1).rio.to_raster('data/non_ag_mask.tif')
+    non_ag_xr.sum(['PRIMARY_V7','LU_DESC']).astype(np.int8).rio.write_nodata(-1).rio.to_raster('data/non_ag_mask_sum.tif')
 
+    # Save the reprojected lumap_5km to tif
+    lumap_xr = xr.open_dataset('data/lumap_2d_all_lucc_5km.nc')['data']
+    
+    ag_xr_5km = lumap_xr.sel(LU_DESC=[i for i in lumap_xr.LU_DESC.values if i != 'Non-agricultural land'])
+    ag_xr_5km.sum('PRIMARY_V7').rio.write_nodata(-1).rio.to_raster('data/ag_mask_5km.tif')
+    ag_xr_5km.sum(['PRIMARY_V7','LU_DESC']).rio.write_nodata(-1).rio.to_raster('data/ag_mask_sum_5km.tif')
+    
+    non_ag_xr_5km = lumap_xr.sel(LU_DESC=['Non-agricultural land'])
+    non_ag_xr_5km.sum(['PRIMARY_V7']).rio.write_nodata(-1).rio.to_raster('data/non_ag_mask_5km.tif')
+    non_ag_xr_5km.sum(['PRIMARY_V7','LU_DESC']).rio.write_nodata(-1).rio.to_raster('data/non_ag_mask_sum_5km.tif')
 
 
 

@@ -206,13 +206,13 @@ def bincount_avg(mask_arr, weight_arr, low_res_xr: xr.DataArray=None):
     - bin_avg (xarray.DataArray): Array containing the average values based on bin counts.
     """
     bin_sum = np.bincount(mask_arr.values.flatten(), weights=weight_arr.values.flatten(), minlength=low_res_xr.size)
-    bin_occ = np.bincount(mask_arr.values.flatten(), weights=weight_arr.values.flatten() > 0, minlength=low_res_xr.size)
+    bin_occ = np.bincount(mask_arr.values.flatten(), minlength=low_res_xr.size)
 
     # Take values up to the last valid index, because the index of `low_res_xr.size + 1` indicates `NODATA`
     bin_sum = bin_sum[:low_res_xr.size + 1]     
     bin_occ = bin_occ[:low_res_xr.size + 1]     
 
-    # Calculate the average value of each bin
+    # Calculate the average value of each bin, ignoring division by zero (which will be nan)
     with np.errstate(divide='ignore', invalid='ignore'):
         bin_avg = (bin_sum / bin_occ).reshape(low_res_xr.shape).astype(np.float32)
         bin_avg = np.nan_to_num(bin_avg)
