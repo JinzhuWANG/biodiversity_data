@@ -1,3 +1,5 @@
+from itertools import product
+from joblib import Parallel, delayed
 import numpy as np
 import geopandas as gpd
 import pandas as pd
@@ -8,6 +10,7 @@ import rasterio
 from rasterio.enums import Resampling
 from rasterio.features import shapes
 from codes.fake_func import upsample_array, Data, get_coarse2D_map
+from luto.ag_managements import AG_MANAGEMENTS_TO_LAND_USES
 
 
 
@@ -22,20 +25,27 @@ def ag_to_xr(data, dvar):
             'lu': data.AGRICULTURAL_LANDUSES
         }   
     )
-    return ag_dvar_xr
+    return ag_dvar_xr.reindex(lu=data.AGRICULTURAL_LANDUSES)
 
 
-def am_to_xr(data, am, dvar):
-    am_dvar_xr = xr.DataArray(
-        dvar, 
-        dims=('lm', 'cell', 'lu'),
-        coords={
-            'lm': data.LANDMANS,
-            'cell': np.arange(dvar.shape[1]),
-            'lu': data.AGRICULTURAL_LANDUSES
-        }   
-    )
-    return am_dvar_xr.expand_dims({'am': [am]})
+def am_to_xr(data, am_dvar):
+    am_dvars = []
+    for am in am_dvar.keys():  
+        am_dvar_xr = xr.DataArray(
+            am_dvar[am], 
+            dims=('lm', 'cell', 'lu'),
+            coords={
+                'lm': data.LANDMANS,
+                'cell': np.arange(am_dvar[am].shape[1]),
+                'lu': data.AGRICULTURAL_LANDUSES
+            }   
+        )
+        am_dvar_xr = am_dvar_xr.expand_dims({'am':[am]})
+        am_dvars.append(am_dvar_xr)
+            
+    return xr.combine_by_coords(am_dvars).reindex(am=AG_MANAGEMENTS_TO_LAND_USES.keys(), lu=data.AGRICULTURAL_LANDUSES, lm=data.LANDMANS)
+
+
 
 def non_ag_to_xr(data, dvar):
     non_ag_dvar_xr = xr.DataArray(
@@ -45,7 +55,7 @@ def non_ag_to_xr(data, dvar):
                 'cell': np.arange(dvar.shape[0]),
                 'lu': data.NON_AGRICULTURAL_LANDUSES}   
     )
-    return non_ag_dvar_xr
+    return non_ag_dvar_xr.reindex(lu=data.NON_AGRICULTURAL_LANDUSES)
 
 
 def combine_future_hist(nc_path: str, hist_path: str = 'data/historic_historic.nc'):
@@ -283,5 +293,35 @@ def match_lumap_biomap(
     map_ = bincount_avg(bio_id_map, map_,  bio_map)
     map_ = map_.where(map_ != map_.rio.nodata, 0)
     return map_
+
+
+# Function to warp, reporject, and match the 1D map to the same CRS and transform of another map
+def ag_dvar_to_bio_map(data, ag_dvar, res_factor, max_workers):
+    """
+    Reprojects and matches agricultural land cover variables to biodiversity maps.
+
+    Parameters:
+    - data (Data object): The Data class object of LUTO.
+    - ag_dvar (xarray.Dataset): The agricultural land cover variables.
+    - res_factor (int): The resolution factor for matching.
+    - max_workers (int): The maximum number of parallel workers.
+
+    Returns:
+    - xarray.Dataset: The combined dataset of reprojected and matched variables.
+    """
+
+    # wrapper function for parallel processing
+    def reproject_match_dvar(ag_dvar, lm, lu, res_factor):
+        map_ = ag_dvar.sel(lm=lm, lu=lu)
+        map_ = match_lumap_biomap(data, map_, res_factor)
+        map_ = map_.expand_dims({'lm': [lm], 'lu': [lu]})
+        return map_
+
+    tasks = [delayed(reproject_match_dvar)(ag_dvar, lm, lu, res_factor) 
+            for lm,lu in product(ag_dvar['lm'].values, ag_dvar['lu'].values)]
+
+    para_obj = Parallel(n_jobs=min(len(tasks), max_workers), return_as='generator')
+    return xr.combine_by_coords([i for i in para_obj(tasks)])
+
 
 
