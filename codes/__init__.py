@@ -295,7 +295,6 @@ def match_lumap_biomap(
     return map_
 
 
-# Function to warp, reporject, and match the 1D map to the same CRS and transform of another map
 def ag_dvar_to_bio_map(data, ag_dvar, res_factor, max_workers):
     """
     Reprojects and matches agricultural land cover variables to biodiversity maps.
@@ -324,4 +323,58 @@ def ag_dvar_to_bio_map(data, ag_dvar, res_factor, max_workers):
     return xr.combine_by_coords([i for i in para_obj(tasks)])
 
 
+def am_dvar_to_bio_map(data, am_dvar, res_factor, max_workers):
+    """
+    Reprojects and matches agricultural land cover variables to biodiversity maps.
 
+    Parameters:
+    - data (Data object): The Data class object of LUTO.
+    - am_dvar (xarray.Dataset): The agricultural land cover variables.
+    - res_factor (int): The resolution factor for matching.
+    - max_workers (int): The maximum number of parallel workers.
+
+    Returns:
+    - xarray.Dataset: The combined dataset of reprojected and matched variables.
+    """
+
+    # wrapper function for parallel processing
+    def reproject_match_dvar(am_dvar, am, lm, lu, res_factor):
+        map_ = am_dvar.sel(lm=lm, lu=lu)
+        map_ = match_lumap_biomap(data, map_, res_factor)
+        map_ = map_.expand_dims({'am':[am], 'lm': [lm], 'lu': [lu]})
+        return map_
+
+    tasks = [delayed(reproject_match_dvar)(am_dvar, am, lm, lu, res_factor) 
+            for am,lm,lu in product(am_dvar['am'].values, am_dvar['lm'].values, am_dvar['lu'].values)]
+
+    para_obj = Parallel(n_jobs=min(len(tasks), max_workers), return_as='generator')
+    return xr.combine_by_coords([i for i in para_obj(tasks)]).reindex(am=AG_MANAGEMENTS_TO_LAND_USES.keys())
+
+
+
+def non_ag_dvar_to_bio_map(data, non_ag_dvar, res_factor, max_workers):
+    """
+    Reprojects and matches agricultural land cover variables to biodiversity maps.
+
+    Parameters:
+    - data (Data object): The Data class object of LUTO.
+    - non_ag_dvar (xarray.Dataset): The agricultural land cover variables.
+    - res_factor (int): The resolution factor for matching.
+    - max_workers (int): The maximum number of parallel workers.
+
+    Returns:
+    - xarray.Dataset: The combined dataset of reprojected and matched variables.
+    """
+
+    # wrapper function for parallel processing
+    def reproject_match_dvar(non_ag_dvar, lu, res_factor):
+        map_ = non_ag_dvar.sel(lu=lu)
+        map_ = match_lumap_biomap(data, map_, res_factor)
+        map_ = map_.expand_dims({'lu': [lu]})
+        return map_
+
+    tasks = [delayed(reproject_match_dvar)(non_ag_dvar, lu, res_factor) 
+            for lu in non_ag_dvar['lu'].values]
+
+    para_obj = Parallel(n_jobs=min(len(tasks), max_workers), return_as='generator')
+    return xr.combine_by_coords([i for i in para_obj(tasks)])

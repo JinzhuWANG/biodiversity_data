@@ -1,13 +1,12 @@
-import xarray as xr
 import numpy as np
 
-from codes import ag_dvar_to_bio_map, ag_to_xr, am_to_xr, non_ag_to_xr
+from codes import ag_dvar_to_bio_map, ag_to_xr, am_dvar_to_bio_map, am_to_xr, non_ag_dvar_to_bio_map, non_ag_to_xr
 from codes.fake_func import Data
 from luto.ag_managements import AG_MANAGEMENTS_TO_LAND_USES
 
 # Read in fake data
-max_workers = 20
-res_factor = 10
+max_workers = 10
+res_factor = 5
 year = 2050
 data = Data(res_factor)
 
@@ -28,12 +27,8 @@ non_ag_dvar = non_ag_to_xr(data, non_ag_dvar)
 
 # Reproject and match dvars to the bio map
 ag_dvar_2D_5km = ag_dvar_to_bio_map(data, ag_dvar, res_factor, max_workers)
-
-
-
-
-
-
+am_dvar_2D_5km = am_dvar_to_bio_map(data, am_dvar, res_factor, max_workers)
+non_ag_dvar_2D_5km = non_ag_dvar_to_bio_map(data, non_ag_dvar, res_factor, max_workers)
 
 
 
