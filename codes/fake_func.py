@@ -1,9 +1,20 @@
+'''
+These are the functions that are used to mimic the LUTO project.
+
+By importing these functions, we can pretent that we are working inside the LUTO project, 
+so that it will be easier to migrate testing codes back to LUTO project.
+
+AUTHOR: Jinzhu WANG
+EMAIL: wangjinzhulala@gmail.com
+DATE: 27 Jun 2024
+'''
+
+
+
+
 import pandas as pd
 import numpy as np
 import rasterio
-
-
-
 
 
 def get_coarse2D_map(data, map_:np.ndarray)-> np.ndarray:
