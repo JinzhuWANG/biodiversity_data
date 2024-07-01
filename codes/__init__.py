@@ -1,5 +1,5 @@
-from itertools import product
-from joblib import Parallel, delayed
+
+import os
 import numpy as np
 import geopandas as gpd
 import pandas as pd
@@ -7,9 +7,14 @@ import xarray as xr
 import rioxarray as rxr
 import rasterio
 
+import luto.settings as settings
+
+from itertools import product
+from joblib import Parallel, delayed
 from rasterio.enums import Resampling
 from rasterio.features import shapes
 from codes.fake_func import upsample_array, Data, get_coarse2D_map
+
 from luto.ag_managements import AG_MANAGEMENTS_TO_LAND_USES
 
 
@@ -58,44 +63,22 @@ def non_ag_to_xr(data, dvar):
     return non_ag_dvar_xr.reindex(lu=data.NON_AGRICULTURAL_LANDUSES)
 
 
-def combine_future_hist(nc_path: str, hist_path: str = 'data/historic_historic.nc'):
+def get_bio_cells(bio_map:xr.open_dataarray, crs:str='epsg:4283') -> gpd.GeoDataFrame:
     """
-    Combines future and historic datasets by coordinates.
+    Vectorize a biodiversity map to individual cells.
 
     Parameters:
-    nc_path (str): The file path of the future dataset.
-    hist_path (str): The file path of the historic dataset. Default is 'data/historic_historic.nc'.
-
-    Returns:
-    xr.Dataset: The combined dataset.
-
-    """
-    ds_enssemble = xr.open_dataset(nc_path, engine='h5netcdf', chunks='auto')['data']
-    ds_historic = xr.open_dataset(hist_path, engine='h5netcdf', chunks='auto')['data']
-    ds_historic['y'] = ds_enssemble['y']
-    ds_historic['x'] = ds_enssemble['x']
-    return xr.combine_by_coords([ds_historic, ds_enssemble])['data']
-
-
-
-
-def get_bio_cells(bio_map:str, crs:str='epsg:4283') -> gpd.GeoDataFrame:
-    """
-    Vectorized a bio_map to individual cells.
-
-    Parameters:
-    bio_map (str): The file path of the biodiversity map.
+    bio_map (xr.open_dataarray): The biodiversity map as an xarray DataArray.
     crs (str, optional): The coordinate reference system of the output GeoDataFrame. Defaults to 'epsg:4283' (GDA 1994).
 
     Returns:
     tuple: A tuple containing the cell map array and its vectorized GeoDataFrame of each cell.
     """
 
-    # Load a biodiversity map to retrieve the geo-information
-    with rasterio.open(bio_map) as src:
-        transform = src.transform
-        src_arr = src.read(1)
-        
+    # Load a biodiversity map template to retrieve the geo-information
+    transform = bio_map.rio.transform()
+    src_arr = bio_map.values
+    
     # Vectorize the map, each cell will have a unique id as the value    
     cell_map_arr = np.arange(src_arr.size).reshape(src_arr.shape)
     cells = ({'properties': {'cell_id': v}, 'geometry': s} for s, v in shapes(cell_map_arr, transform=transform))
@@ -171,16 +154,14 @@ def mask_cells(ds: xr.Dataset, cell_arr: np.ndarray, joined_gdf: gpd.GeoDataFram
 
 
 
-def get_id_map_by_upsample_reproject(low_res_map, high_res_map, low_res_crs, low_res_trans):
+def get_id_map_by_upsample_reproject(low_res_map, high_res_map):
     """
     Upsamples and reprojects a low-resolution map to match the resolution and 
     coordinate reference system (CRS) of a high-resolution map.
     
     Parameters:
-        low_res_map (2D xarray.DataArray): The low-resolution map to upsample and reproject. Should at least has the affine transformation.
-        high_res_map (2D xarray.DataArray): The high-resolution map to match the resolution and CRS to. Must have CRS and affine transformation.
-        low_res_crs (str): The CRS of the low-resolution map.
-        low_res_trans (affine.Affine): The affine transformation of the low-resolution map.
+        low_res_map (2D xarray.DataArray): The low-resolution map to upsample and reproject. Should have CRS and affine transformation.
+        high_res_map (2D xarray.DataArray): The high-resolution map to match the resolution and CRS to. Should have CRS and affine transformation.
     
     Returns:
         xarray.DataArray: The upsampled and reprojected map with the same CRS and resolution as the high-resolution map.
@@ -191,8 +172,8 @@ def get_id_map_by_upsample_reproject(low_res_map, high_res_map, low_res_crs, low
         dims=['y', 'x'], 
         coords={'y': low_res_map.coords['y'], 'x': low_res_map.coords['x']})
     
-    low_res_id_map = low_res_id_map.rio.write_crs(low_res_crs)
-    low_res_id_map = low_res_id_map.rio.write_transform(low_res_trans)
+    low_res_id_map = low_res_id_map.rio.write_crs(low_res_map.rio.crs)
+    low_res_id_map = low_res_id_map.rio.write_transform(low_res_map.rio.transform())
     low_res_id_map = low_res_id_map.rio.reproject_match(
         high_res_map, 
         Resampling = Resampling.nearest, 
@@ -249,8 +230,8 @@ def match_lumap_biomap(
     data:Data, 
     map_:np.ndarray, 
     res_factor:int, 
-    lumap_tempelate:str='data/NLUM_2010-11_mask.tif', 
-    biomap_tempelate:str='data/Arenophryne_rotunda_BCC.CSM2.MR_ssp126_2030_AUS_5km_EnviroSuit.tif')-> xr.DataArray:
+    lumap_tempelate:str=f'{settings.INPUT_DIR}/NLUM_2010-11_mask.tif', 
+    biomap_tempelate:str=f'{settings.INPUT_DIR}/bio_mask.nc')-> xr.DataArray:
     """
     Matches the map_ to the same projection and resolution as of biomap templates.
     
@@ -263,8 +244,8 @@ def match_lumap_biomap(
     - data (Data): The data object containing necessary information.
     - map_ (1D, np.ndarray): The map to be matched.
     - res_factor (int): The resolution factor.
-    - lumap_tempelate (str): The path to the lumap template file. Default is 'data/NLUM_2010-11_mask.tif'.
-    - biomap_tempelate (str): The path to the biomap template file. Default is 'data/Arenophryne_rotunda_BCC.CSM2.MR_ssp126_2030_AUS_5km_EnviroSuit.tif'.
+    - lumap_tempelate (str): The path to the lumap template file. Default is f'{settings.INPUT_DIR}/NLUM_2010-11_mask.tif'.
+    - biomap_tempelate (str): The path to the biomap template file. Default is f'{settings.INPUT_DIR}/bio_mask.nc'.
 
     Returns:
     - xr.DataArray: The matched map.
@@ -272,9 +253,10 @@ def match_lumap_biomap(
     """
     
     NLUM = rxr.open_rasterio(lumap_tempelate, chunks='auto').squeeze('band').drop_vars('band')
-    bio_map = rxr.open_rasterio(biomap_tempelate, chunks='auto').squeeze('band').drop_vars('band')
-    bio_map = bio_map.rio.write_crs(NLUM.rio.crs)
-    
+    bio_mask_ds = xr.open_dataset(f'{settings.INPUT_DIR}/bio_mask.nc', decode_coords="all")
+    bio_map = bio_mask_ds['data']
+    bio_map['spatial_ref'] = bio_mask_ds['spatial_ref']
+        
     if res_factor > 1:   
         map_ = get_coarse2D_map(data, map_)
         map_ = upsample_array(data, map_, res_factor)
@@ -289,13 +271,13 @@ def match_lumap_biomap(
     map_ = map_.rio.write_crs(NLUM.rio.crs)
     map_ = map_.rio.write_transform(NLUM.rio.transform())  
     
-    bio_id_map = get_id_map_by_upsample_reproject(bio_map, NLUM, NLUM.rio.crs, bio_map.rio.transform())
+    bio_id_map = get_id_map_by_upsample_reproject(bio_map, NLUM, )
     map_ = bincount_avg(bio_id_map, map_,  bio_map)
     map_ = map_.where(map_ != map_.rio.nodata, 0)
     return map_
 
 
-def ag_dvar_to_bio_map(data, ag_dvar, res_factor, max_workers):
+def ag_dvar_to_bio_map(data, ag_dvar, res_factor, para_obj):
     """
     Reprojects and matches agricultural land cover variables to biodiversity maps.
 
@@ -303,7 +285,7 @@ def ag_dvar_to_bio_map(data, ag_dvar, res_factor, max_workers):
     - data (Data object): The Data class object of LUTO.
     - ag_dvar (xarray.Dataset): The agricultural land cover variables.
     - res_factor (int): The resolution factor for matching.
-    - max_workers (int): The maximum number of parallel workers.
+    - para_obj (object): The parallel processing object.
 
     Returns:
     - xarray.Dataset: The combined dataset of reprojected and matched variables.
@@ -318,12 +300,10 @@ def ag_dvar_to_bio_map(data, ag_dvar, res_factor, max_workers):
 
     tasks = [delayed(reproject_match_dvar)(ag_dvar, lm, lu, res_factor) 
             for lm,lu in product(ag_dvar['lm'].values, ag_dvar['lu'].values)]
-
-    para_obj = Parallel(n_jobs=min(len(tasks), max_workers), return_as='generator')
     return xr.combine_by_coords([i for i in para_obj(tasks)])
 
 
-def am_dvar_to_bio_map(data, am_dvar, res_factor, max_workers):
+def am_dvar_to_bio_map(data, am_dvar, res_factor, para_obj):
     """
     Reprojects and matches agricultural land cover variables to biodiversity maps.
 
@@ -331,7 +311,7 @@ def am_dvar_to_bio_map(data, am_dvar, res_factor, max_workers):
     - data (Data object): The Data class object of LUTO.
     - am_dvar (xarray.Dataset): The agricultural land cover variables.
     - res_factor (int): The resolution factor for matching.
-    - max_workers (int): The maximum number of parallel workers.
+    - para_obj (object): The parallel processing object.
 
     Returns:
     - xarray.Dataset: The combined dataset of reprojected and matched variables.
@@ -346,13 +326,11 @@ def am_dvar_to_bio_map(data, am_dvar, res_factor, max_workers):
 
     tasks = [delayed(reproject_match_dvar)(am_dvar, am, lm, lu, res_factor) 
             for am,lm,lu in product(am_dvar['am'].values, am_dvar['lm'].values, am_dvar['lu'].values)]
-
-    para_obj = Parallel(n_jobs=min(len(tasks), max_workers), return_as='generator')
     return xr.combine_by_coords([i for i in para_obj(tasks)]).reindex(am=AG_MANAGEMENTS_TO_LAND_USES.keys())
 
 
 
-def non_ag_dvar_to_bio_map(data, non_ag_dvar, res_factor, max_workers):
+def non_ag_dvar_to_bio_map(data, non_ag_dvar, res_factor, para_obj):
     """
     Reprojects and matches agricultural land cover variables to biodiversity maps.
 
@@ -360,7 +338,7 @@ def non_ag_dvar_to_bio_map(data, non_ag_dvar, res_factor, max_workers):
     - data (Data object): The Data class object of LUTO.
     - non_ag_dvar (xarray.Dataset): The agricultural land cover variables.
     - res_factor (int): The resolution factor for matching.
-    - max_workers (int): The maximum number of parallel workers.
+    - para_obj (object): The parallel processing object.
 
     Returns:
     - xarray.Dataset: The combined dataset of reprojected and matched variables.
@@ -375,6 +353,37 @@ def non_ag_dvar_to_bio_map(data, non_ag_dvar, res_factor, max_workers):
 
     tasks = [delayed(reproject_match_dvar)(non_ag_dvar, lu, res_factor) 
             for lu in non_ag_dvar['lu'].values]
-
-    para_obj = Parallel(n_jobs=min(len(tasks), max_workers), return_as='generator')
     return xr.combine_by_coords([i for i in para_obj(tasks)])
+
+
+# Calculate the biodiversity condition
+def calc_bio_hist_sum(bio_nc_path:str):
+    bio_xr_raw = xr.open_dataset(bio_nc_path, chunks='auto')['data']
+    encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'float32'}}
+    bio_xr_mask = xr.open_dataset(f'{settings.INPUT_DIR}/bio_mask.nc', chunks='auto')['data'].astype(np.bool_)
+    
+    # Get the sum of all historic cells, !!! important !!! need to mask out the cells that are not in the bio_mask 
+    if os.path.exists(f'{settings.INPUT_DIR}/bio_xr_hist_sum_species.nc'):
+        bio_xr_hist_sum_species = xr.open_dataarray(f'{settings.INPUT_DIR}/bio_xr_hist_sum_species.nc', chunks='auto') 
+    else:
+        bio_xr_hist_sum_species = (bio_xr_raw.sel(year=1990) * bio_xr_mask).sum(['x', 'y']).compute()
+        bio_xr_hist_sum_species.to_netcdf(f'{settings.INPUT_DIR}/bio_xr_hist_sum_species.nc', mode='w', encoding=encoding, engine='h5netcdf')   
+    return bio_xr_hist_sum_species
+
+# Calculate the biodiversity contribution of each species
+def calc_bio_score_species(bio_nc_path:str, bio_xr_hist_sum_species: xr.DataArray):
+    bio_xr_raw = xr.open_dataset(bio_nc_path, chunks='auto')['data']
+    # Calculate the contribution of each cell (%) to the total biodiversity
+    bio_xr_contribution_species = (bio_xr_raw / bio_xr_hist_sum_species ).astype(np.float32)*100   
+    return bio_xr_contribution_species         
+
+# Calculate the biodiversity contribution of each group (amphibians, mammals, etc.)
+def calc_bio_score_group(bio_nc_path:str, bio_xr_hist_sum_species: xr.DataArray):
+    bio_xr_raw = xr.open_dataset(bio_nc_path, chunks='auto')['data']
+    groups = list(set(bio_xr_raw['group'].values))
+    # !!! important !!! Careful with the sum of all species across a group, which may exceed the range of int32 dtype
+    bio_xr_raw_group = bio_xr_raw.groupby('group').apply(lambda x: x.sum('species'))
+    bio_xr_hist_sum_groups = bio_xr_hist_sum_species.groupby('group').apply(lambda x: x.astype(object).sum('species')) 
+    bio_xr_contribution_group = (bio_xr_raw_group / bio_xr_hist_sum_groups).astype(np.float32)*100
+    return bio_xr_contribution_group
+

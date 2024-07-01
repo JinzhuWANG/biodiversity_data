@@ -76,7 +76,7 @@ def upsample_array(data, map_:np.ndarray, factor:int) -> np.ndarray:
 
 class Data:
     def __init__(self, resfactor:int):
-        with rasterio.open('data/NLUM_2010-11_mask.tif') as src:
+        with rasterio.open('input/NLUM_2010-11_mask.tif') as src:
             self.GEO_META_FULL_RES = src.meta.copy()                            
             self.NLUM_MASK = src.read(1)
             

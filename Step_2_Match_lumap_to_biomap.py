@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import rioxarray as rxr
+import luto.settings as settings
 
 from tqdm.auto import tqdm
 from itertools import product
@@ -14,23 +15,22 @@ from codes import bincount_avg, get_bio_cells, get_id_map_by_upsample_reproject
 max_worker = 10
 encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'float32'}} 
 
-
 # Reference data
-NLUM = rxr.open_rasterio('data/NLUM_2010-11_mask.tif', chunks='auto').squeeze('band').drop_vars('band').astype(np.bool_)
-bio_map = rxr.open_rasterio('data/Arenophryne_rotunda_BCC.CSM2.MR_ssp126_2030_AUS_5km_EnviroSuit.tif', chunks='auto').squeeze('band').drop_vars('band')
-bio_map = bio_map.rio.write_crs(NLUM.rio.crs)
-bio_mask = xr.where(bio_map != bio_map.rio.nodata, 1, 0).astype(np.bool_)
+NLUM = rxr.open_rasterio(f'{settings.INPUT_DIR}/NLUM_2010-11_mask.tif', chunks='auto').squeeze('band').drop_vars('band').astype(np.bool_)
+bio_mask_ds = xr.open_dataset(f'{settings.INPUT_DIR}/bio_mask.nc', decode_coords="all")
+bio_mask = bio_mask_ds['data']
+bio_mask['spatial_ref'] = bio_mask_ds['spatial_ref']
 
-# Calculate the area of each cell in the bio_map
-if not os.path.exists('data/bio_area_ha.nc'):
-    cell_arr, cell_df = get_bio_cells('data/Arenophryne_rotunda_BCC.CSM2.MR_ssp126_2030_AUS_5km_EnviroSuit.tif')
-    cell_df_albers = cell_df.to_crs('EPSG:3577') # GDA94 / Australian Albers
-    cell_df_albers['area'] = cell_df_albers.area / 10000
+# Calculate the area of each cell in the bio_mask
+if not os.path.exists(f'{settings.INPUT_DIR}/bio_cell_area_ha.nc'):
+    cell_arr, cell_df = get_bio_cells(bio_mask)
+    cell_df_albers = cell_df.to_crs('EPSG:3577')                # GDA94 / Australian Albers
+    cell_df_albers['area'] = cell_df_albers.area / 10000        # m2 to ha
     area_arr = cell_df_albers['area'].values.reshape(cell_arr.shape)
-    area_arr = xr.DataArray(area_arr, dims=['y', 'x'], coords={'y': bio_map['y'], 'x': bio_map['x']})
+    area_arr = xr.DataArray(area_arr, dims=['y', 'x'], coords={'y': bio_mask['y'], 'x': bio_mask['x']})
     area_arr.name = 'data'
     area_arr.to_netcdf(
-        'data/bio_area_ha.nc', 
+        f'{settings.INPUT_DIR}/bio_cell_area_ha.nc', 
         mode='w', 
         encoding={'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'float32'}}, engine='h5netcdf')
 
@@ -46,7 +46,6 @@ lumap_xr = lumap_xr.rio.write_crs(NLUM.rio.crs)
 lumap_xr = lumap_xr.rio.write_transform(NLUM.rio.transform())
 
 
-
 # Sanity check: Make sure the non-ag and ag cells are added up to the total cells
 non_ag_xr = lumap_xr.sel(LU_DESC=['Non-agricultural land'])
 ag_xr = lumap_xr.sel(LU_DESC=[i for i in lumap_xr.LU_DESC.values if i != 'Non-agricultural land'])
@@ -58,10 +57,10 @@ if num_non_ag + num_ag != num_total:
     raise ValueError(f'The sum of `non-ag cells` ({num_non_ag}) and `ag cells` {num_ag} is not equal to the `total cells` ({num_total}).')
 
 
-# Create an array of the same shape as the bio_map, and each cell has the value of the chronological ID of the bio_map
+# Create an array of the same shape as the bio_mask, and each cell has the value of the chronological ID of the bio_mask
 # then upsample and reproject the id array to the same resolution as the lumap, 
-# and finally, each cell in the id_map will have the id of bio_map but the CRS/resolution of lumap
-id_map = get_id_map_by_upsample_reproject(bio_map, NLUM, NLUM.rio.crs, bio_map.rio.transform()) 
+# and finally, each cell in the id_map will have the id of bio_mask but the CRS/resolution of lumap
+id_map = get_id_map_by_upsample_reproject(bio_mask, NLUM) 
 
 
 
@@ -70,7 +69,7 @@ tasks = []
 for i,j in product(sorted(lumap_xr['PRIMARY_V7'].values), sorted(lumap_xr['LU_DESC'].values)):
     arr_selected = lumap_xr.sel(PRIMARY_V7=i, LU_DESC=j)
     arr_selected = arr_selected.expand_dims({'PRIMARY_V7': [i], 'LU_DESC': [j]})
-    tasks.append(delayed(bincount_avg)(id_map, arr_selected, bio_map))
+    tasks.append(delayed(bincount_avg)(id_map, arr_selected, bio_mask))
 
 para_obj = Parallel(n_jobs=min(len(tasks), max_worker), return_as='generator')
 lumap_xr = xr.combine_by_coords([i for i in para_obj(tqdm(tasks, total=len(tasks)))])
@@ -83,12 +82,11 @@ non_ag_xr_5km = lumap_xr.sel(LU_DESC=['Non-agricultural land']).sum(['LU_DESC'])
 lumap_xr.name = 'data'
 ag_xr_5km.name = 'data'
 non_ag_xr_5km.name = 'data'
-bio_mask.name = 'data'
 
-lumap_xr.to_netcdf(f'data/lumap_2d_all_lucc_5km.nc', mode='w', encoding=encoding, engine='h5netcdf')
-ag_xr_5km.to_netcdf(f'data/lumap_2d_all_lucc_5km_ag.nc', mode='w', encoding=encoding, engine='h5netcdf')
-non_ag_xr_5km.to_netcdf(f'data/lumap_2d_all_lucc_5km_non_ag.nc', mode='w', encoding=encoding, engine='h5netcdf')
-bio_mask.to_netcdf(f'data/bio_mask.nc', mode='w', encoding=encoding, engine='h5netcdf')
+lumap_xr.to_netcdf('data/lumap_2d_all_lucc_5km.nc', mode='w', encoding=encoding, engine='h5netcdf')
+ag_xr_5km.to_netcdf('data/lumap_2d_all_lucc_5km_ag.nc', mode='w', encoding=encoding, engine='h5netcdf')
+non_ag_xr_5km.to_netcdf('data/lumap_2d_all_lucc_5km_non_ag.nc', mode='w', encoding=encoding, engine='h5netcdf')
+
 
 
 # Sanity check
