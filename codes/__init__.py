@@ -6,10 +6,12 @@ import pandas as pd
 import xarray as xr
 import rioxarray as rxr
 import rasterio
+import sparse
 
 import luto.settings as settings
 
 from itertools import product
+from tqdm.auto import tqdm
 from joblib import Parallel, delayed
 from rasterio.enums import Resampling
 from rasterio.features import shapes
@@ -299,8 +301,12 @@ def ag_dvar_to_bio_map(data, ag_dvar, res_factor, para_obj):
         return map_
 
     tasks = [delayed(reproject_match_dvar)(ag_dvar, lm, lu, res_factor) 
-            for lm,lu in product(ag_dvar['lm'].values, ag_dvar['lu'].values)]
-    return xr.combine_by_coords([i for i in para_obj(tasks)])
+             for lm,lu in product(ag_dvar['lm'].values, ag_dvar['lu'].values)]
+    out_arr = xr.combine_by_coords([i for i in para_obj(tasks)])
+    # Convert to sparse array to save memory
+    out_arr.values = sparse.COO.from_numpy(out_arr.values)
+    
+    return out_arr
 
 
 def am_dvar_to_bio_map(data, am_dvar, res_factor, para_obj):
@@ -326,7 +332,11 @@ def am_dvar_to_bio_map(data, am_dvar, res_factor, para_obj):
 
     tasks = [delayed(reproject_match_dvar)(am_dvar, am, lm, lu, res_factor) 
             for am,lm,lu in product(am_dvar['am'].values, am_dvar['lm'].values, am_dvar['lu'].values)]
-    return xr.combine_by_coords([i for i in para_obj(tasks)]).reindex(am=AG_MANAGEMENTS_TO_LAND_USES.keys())
+    out_arr = xr.combine_by_coords([i for i in para_obj(tasks)])
+    # Convert to sparse array to save memory
+    out_arr.values = sparse.COO.from_numpy(out_arr.values)
+    
+    return out_arr
 
 
 
@@ -353,7 +363,11 @@ def non_ag_dvar_to_bio_map(data, non_ag_dvar, res_factor, para_obj):
 
     tasks = [delayed(reproject_match_dvar)(non_ag_dvar, lu, res_factor) 
             for lu in non_ag_dvar['lu'].values]
-    return xr.combine_by_coords([i for i in para_obj(tasks)])
+    out_arr = xr.combine_by_coords([i for i in para_obj(tasks)])
+    # Convert to sparse array to save memory
+    out_arr.values = sparse.COO.from_numpy(out_arr.values)
+    
+    return out_arr
 
 
 # Calculate the biodiversity condition
@@ -370,20 +384,54 @@ def calc_bio_hist_sum(bio_nc_path:str):
         bio_xr_hist_sum_species.to_netcdf(f'{settings.INPUT_DIR}/bio_xr_hist_sum_species.nc', mode='w', encoding=encoding, engine='h5netcdf')   
     return bio_xr_hist_sum_species
 
+
 # Calculate the biodiversity contribution of each species
 def calc_bio_score_species(bio_nc_path:str, bio_xr_hist_sum_species: xr.DataArray):
+    """
+    Calculate the contribution of each cell to the total biodiversity score for a given species.
+
+    Parameters:
+    bio_nc_path (str): The file path to the biodiversity data in NetCDF format.
+    bio_xr_hist_sum_species (xr.DataArray): The historical sum of biodiversity scores for the species.
+
+    Returns:
+    xr.DataArray: The contribution of each cell to the total biodiversity score as a percentage.
+    """
     bio_xr_raw = xr.open_dataset(bio_nc_path, chunks='auto')['data']
     # Calculate the contribution of each cell (%) to the total biodiversity
     bio_xr_contribution_species = (bio_xr_raw / bio_xr_hist_sum_species ).astype(np.float32)*100   
-    return bio_xr_contribution_species         
+    return bio_xr_contribution_species
+
 
 # Calculate the biodiversity contribution of each group (amphibians, mammals, etc.)
 def calc_bio_score_group(bio_nc_path:str, bio_xr_hist_sum_species: xr.DataArray):
-    bio_xr_raw = xr.open_dataset(bio_nc_path, chunks='auto')['data']
-    groups = list(set(bio_xr_raw['group'].values))
-    # !!! important !!! Careful with the sum of all species across a group, which may exceed the range of int32 dtype
-    bio_xr_raw_group = bio_xr_raw.groupby('group').apply(lambda x: x.sum('species'))
-    bio_xr_hist_sum_groups = bio_xr_hist_sum_species.groupby('group').apply(lambda x: x.astype(object).sum('species')) 
-    bio_xr_contribution_group = (bio_xr_raw_group / bio_xr_hist_sum_groups).astype(np.float32)*100
-    return bio_xr_contribution_group
+    """
+    Calculate the contribution of each cell to the total biodiversity score for a given group (ampibians, mammals, etc.).
+
+    Parameters:
+    - bio_nc_path (str): The file path to the biodiversity data in NetCDF format.
+    - bio_xr_hist_sum_species (xr.DataArray): The historical sum of bio-score for each group.
+
+    Returns:
+    - bio_xr_contribution_group (xr.DataArray): The biodiversity score for each group.
+
+    """
+    bio_contribution_species = calc_bio_score_species(bio_nc_path, bio_xr_hist_sum_species)
+    groups = list(set(bio_contribution_species['group'].values))
+    bio_contribution_group = bio_contribution_species.groupby('group').apply(lambda x: x.mean('species')).astype(np.float32)*100
+    return bio_contribution_group
+
+
+# Helper functions to interpolate the biodiversity scores
+def interp_by_year(ds, year):
+    return ds.interp(year=year, method='linear', kwargs={'fill_value': 'extrapolate'}).astype(np.float32).compute()
+
+def interp_bio_species_to_shards(bio_contribution_species, interp_year, max_workers=settings.THREADS):
+    chunks_species = np.array_split(range(bio_contribution_species['species'].size), max_workers)
+    bio_xr_chunks = [bio_contribution_species.isel(species=idx) for idx in chunks_species]
+    return [delayed(interp_by_year)(chunk, [year]) for chunk in bio_xr_chunks for year in interp_year]
+
+def interp_bio_group_to_shards(bio_contribution_group, interp_year):
+    return [delayed(interp_by_year)(bio_contribution_group, [year]) for year in interp_year]
+
 
