@@ -373,14 +373,14 @@ def non_ag_dvar_to_bio_map(data, non_ag_dvar, res_factor, para_obj):
 # Calculate the biodiversity condition
 def calc_bio_hist_sum(bio_nc_path:str):
     bio_xr_raw = xr.open_dataset(bio_nc_path, chunks='auto')['data']
-    encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'float32'}}
+    encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'uint64'}}
     bio_xr_mask = xr.open_dataset(f'{settings.INPUT_DIR}/bio_mask.nc', chunks='auto')['data'].astype(np.bool_)
     
     # Get the sum of all historic cells, !!! important !!! need to mask out the cells that are not in the bio_mask 
     if os.path.exists(f'{settings.INPUT_DIR}/bio_xr_hist_sum_species.nc'):
         bio_xr_hist_sum_species = xr.open_dataarray(f'{settings.INPUT_DIR}/bio_xr_hist_sum_species.nc', chunks='auto') 
     else:
-        bio_xr_hist_sum_species = (bio_xr_raw.sel(year=1990) * bio_xr_mask).sum(['x', 'y']).compute()
+        bio_xr_hist_sum_species = (bio_xr_raw.sel(year=1990).astype('uint64') * bio_xr_mask).sum(['x', 'y']).compute()
         bio_xr_hist_sum_species.to_netcdf(f'{settings.INPUT_DIR}/bio_xr_hist_sum_species.nc', mode='w', encoding=encoding, engine='h5netcdf')   
     return bio_xr_hist_sum_species
 
@@ -399,7 +399,7 @@ def calc_bio_score_species(bio_nc_path:str, bio_xr_hist_sum_species: xr.DataArra
     """
     bio_xr_raw = xr.open_dataset(bio_nc_path, chunks='auto')['data']
     # Calculate the contribution of each cell (%) to the total biodiversity
-    bio_xr_contribution_species = (bio_xr_raw / bio_xr_hist_sum_species ).astype(np.float32)*100   
+    bio_xr_contribution_species = (bio_xr_raw / bio_xr_hist_sum_species).astype(np.float32) * 100   
     return bio_xr_contribution_species
 
 
@@ -418,18 +418,18 @@ def calc_bio_score_group(bio_nc_path:str, bio_xr_hist_sum_species: xr.DataArray)
     """
     bio_contribution_species = calc_bio_score_species(bio_nc_path, bio_xr_hist_sum_species)
     groups = list(set(bio_contribution_species['group'].values))
-    bio_contribution_group = bio_contribution_species.groupby('group').apply(lambda x: x.mean('species')).astype(np.float32)*100
+    bio_contribution_group = bio_contribution_species.groupby('group').mean(dim='species').astype(np.float32) * 100
     return bio_contribution_group
 
 
-# Helper functions to interpolate the biodiversity scores
-def interp_by_year(ds, year):
+# Helper functions to interpolate biodiversity scores to given years
+def interp_by_year(ds, year:list[int]):
     return ds.interp(year=year, method='linear', kwargs={'fill_value': 'extrapolate'}).astype(np.float32).compute()
 
 def interp_bio_species_to_shards(bio_contribution_species, interp_year, max_workers=settings.THREADS):
     chunks_species = np.array_split(range(bio_contribution_species['species'].size), max_workers)
     bio_xr_chunks = [bio_contribution_species.isel(species=idx) for idx in chunks_species]
-    return [delayed(interp_by_year)(chunk, [year]) for chunk in bio_xr_chunks for year in interp_year]
+    return [delayed(interp_by_year)(chunk, [yr]) for chunk in bio_xr_chunks for yr in interp_year]
 
 def interp_bio_group_to_shards(bio_contribution_group, interp_year):
     return [delayed(interp_by_year)(bio_contribution_group, [year]) for year in interp_year]

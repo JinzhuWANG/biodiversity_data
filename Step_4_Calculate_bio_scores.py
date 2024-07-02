@@ -86,8 +86,8 @@ def cal_bio_score_by_yr(bio_shards, interp_year, para_obj=para_obj):
 
 # Calculate the biodiversity contribution scores
 if settings.BIO_CALC_LEVEL == 'group':
-    bio_score = xr.open_dataarray(f'{settings.INPUT_DIR}/bio_ssp{settings.SSP}_Condition_group.nc', chunks='auto')
-    bio_contribution_shards = [bio_score.sel(year=interp_year, group=group) for group in bio_score['group'].values] 
+    bio_score_group = xr.open_dataarray(f'{settings.INPUT_DIR}/bio_ssp{settings.SSP}_Condition_group.nc', chunks='auto')
+    bio_contribution_shards = [bio_score_group.sel(year=interp_year, group=group) for group in bio_score_group['group'].values] 
 elif settings.BIO_CALC_LEVEL == 'species':
     bio_raw_path = f'{settings.INPUT_DIR}/bio_ssp{settings.SSP}_EnviroSuit.nc'
     bio_his_score_sum = calc_bio_hist_sum(bio_raw_path)
@@ -101,4 +101,12 @@ else:
 bio_df = cal_bio_score_by_yr(bio_contribution_shards[:2], interp_year)
 
 
-
+# Export bio scores to geotiff for validation
+if __name__ == '__main__':
+    
+    
+    toy_bio_raw = np.random.randint(0,100,size=(4,5,5))
+    toy_bio_contribution = toy_bio_raw / toy_bio_raw.sum()
+    
+    toy_bio_group = toy_bio_contribution.mean(axis=0)
+    toy_bio_group.sum()
