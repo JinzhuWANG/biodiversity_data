@@ -2,13 +2,6 @@ import os
 import re
 import numpy as np
 import pandas as pd
-from osgeo import gdal
-import rasterio
-import affine
-
-from rasterio.enums import Resampling
-from rasterio.io import MemoryFile
-from rasterio.vrt import WarpedVRT
 
 from scipy.ndimage import distance_transform_edt
 from tqdm.auto import tqdm
@@ -34,71 +27,6 @@ def replace_mask_with_nearest(map_: np.ndarray, mask) -> np.ndarray:
     return map_
 
 
-def get_warp_opt(in_path:str, resample:Resampling=Resampling.bilinear) -> dict:
-    """
-    Get the warp options for a given input raster file.
-
-    Parameters:
-    - in_path (str): Path to the input raster file.
-    - resample (Resampling): Resampling method to be used during warping. Default is Resampling.bilinear.
-
-    Returns:
-    - dict: A dictionary containing the warp options:
-        - 'resampling': The resampling method.
-        - 'crs': The coordinate reference system of the input raster.
-        - 'transform': The affine transformation matrix for the output raster.
-        - 'height': The height of the input raster.
-        - 'width': The width of the input raster.
-    """
-    with rasterio.open(in_path) as ref:
-        left, bottom, right, top = ref.bounds
-        xres = (right - left) / ref.width
-        yres = (top - bottom) / ref.height
-        dst_transform = affine.Affine(xres, 0.0, left, 0.0, -yres, top)
-        return {
-            'resampling': resample,
-            'crs': ref.crs,
-            'transform': dst_transform,
-            'height': ref.height,
-            'width': ref.width
-        }
-
-
-
-def warp_raster(in_path:str=None, ref_path:str=None) -> None:
-    """
-    Warps a raster to match the spatial reference and resolution of a reference raster.
-
-    Args:
-        in_path (str): Path to the input raster file.
-        ref_path (str): Path to the reference raster file.
-
-    Returns:
-        numpy.ndarray: The warped raster data as a NumPy array with data type 'int8'.
-    """
-    
-    # Get warp options, and reference raster metadata
-    warp_option = get_warp_opt(ref_path)
-    with rasterio.open(ref_path) as ref:
-        ref_mask = (ref.read(1) != -1) & (ref.read(1) != ref.nodata)
-
-    # Fill the nodata of input
-    with rasterio.open(in_path) as src:
-        data = src.read(1)
-        data = replace_with_nearest(data, src.nodata)  
-        src_meta = src.meta.copy()
-    
-    # Write filled data to memory 
-    memfile = MemoryFile()   
-    with memfile.open(**src_meta) as mem_f:
-        mem_f.write(data,1)
-
-    # Reproject mem_f to match ref_mask 
-    with memfile.open() as mem_f, WarpedVRT(mem_f, **warp_option) as vrt:
-        data = vrt.read(1)
-        data = data[np.nonzero(ref_mask)]
-    
-    return data.astype('int8')
 
 
 def find_str(row):
@@ -148,25 +76,5 @@ def get_all_path(root_dir:str, save_path:str='data/all_suitability_tifs.csv'):
     df = pd.DataFrame(records)            
     df[['model', 'ssp', 'year', 'mode']] = df.apply(lambda x: pd.Series(find_str(x)), axis=1) 
     df.to_csv(save_path, index=False)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 

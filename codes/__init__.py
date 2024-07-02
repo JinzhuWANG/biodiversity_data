@@ -5,14 +5,13 @@ import geopandas as gpd
 import pandas as pd
 import xarray as xr
 import rioxarray as rxr
-import rasterio
 import sparse
 
 import luto.settings as settings
 
 from itertools import product
 from tqdm.auto import tqdm
-from joblib import Parallel, delayed
+from joblib import delayed
 from rasterio.enums import Resampling
 from rasterio.features import shapes
 from codes.fake_func import upsample_array, Data, get_coarse2D_map
@@ -418,7 +417,7 @@ def calc_bio_score_group(bio_nc_path:str, bio_xr_hist_sum_species: xr.DataArray)
     """
     bio_contribution_species = calc_bio_score_species(bio_nc_path, bio_xr_hist_sum_species)
     groups = list(set(bio_contribution_species['group'].values))
-    bio_contribution_group = bio_contribution_species.groupby('group').mean(dim='species').astype(np.float32) * 100
+    bio_contribution_group = bio_contribution_species.groupby('group').mean(dim='species').astype(np.float32)
     return bio_contribution_group
 
 
@@ -433,5 +432,76 @@ def interp_bio_species_to_shards(bio_contribution_species, interp_year, max_work
 
 def interp_bio_group_to_shards(bio_contribution_group, interp_year):
     return [delayed(interp_by_year)(bio_contribution_group, [year]) for year in interp_year]
+
+
+# Helper functions to calculate the biodiversity contribution scores
+def xr_to_df(shard, dvar_ag, dvar_am, dvar_non_ag):
+    """
+    Convert an xarray DataArray to a pandas DataFrame with biodiversity contribution scores.
+
+    Parameters:
+    - shard: An xarray DataArray or a tuple of delayed function and arguments.
+    - dvar_ag: An xarray DataArray representing the biodiversity contribution scores for agriculture land use.
+    - dvar_am: An xarray DataArray representing the biodiversity contribution scores for amenity land use.
+    - dvar_non_ag: An xarray DataArray representing the biodiversity contribution scores for non-agriculture land use.
+
+    Returns:
+    - A pandas DataFrame containing the biodiversity contribution scores for different land use types.
+
+    Raises:
+    - ValueError: If the shard parameter is not a valid type (either tuple or xarray DataArray).
+    """
+
+    # Get the values to avoid duplicate computation
+    if isinstance(shard, tuple):            # This means shard is a tuple of delayed function and arguments
+        f, args = shard[0], shard[1]
+        shard_xr = f(*args)
+    elif isinstance(shard, xr.DataArray):   # This means shard is an xr.DataArray
+        shard_xr = shard.compute()
+    else:
+        raise ValueError('Invalid shard type! Should be either tuple (delayed(function), args) or xr.DataArray.')
+
+    # Calculate the biodiversity contribution scores
+    tmp_ag = (shard_xr * dvar_ag).compute().sum(['x', 'y'])
+    tmp_am = (shard_xr * dvar_am).compute().sum(['x', 'y'])
+    tmp_non_ag = (shard_xr * dvar_non_ag).compute().sum(['x', 'y'])
+    
+    # Convert to dense array
+    tmp_ag.data = tmp_ag.data.todense()
+    tmp_am.data = tmp_am.data.todense()
+    tmp_non_ag.data = tmp_non_ag.data.todense()
+    
+    # Convert to dataframe
+    tmp_ag_df = tmp_ag.to_dataframe(name='contribution_%').reset_index()
+    tmp_am_df = tmp_am.to_dataframe(name='contribution_%').reset_index()
+    tmp_non_ag_df = tmp_non_ag.to_dataframe(name='contribution_%').reset_index()
+    
+    # Add land use type
+    tmp_ag_df['lu_type'] = 'ag'
+    tmp_am_df['lu_type'] = 'am'
+    tmp_non_ag_df['lu_type'] = 'non_ag'
+    
+    return pd.concat([tmp_ag_df, tmp_am_df, tmp_non_ag_df], ignore_index=True)
+
+
+def cal_bio_score_by_yr(ag_dvar, am_dvar, non_ag_dvar, bio_shards, interp_year, para_obj):
+    """
+    Calculate biodiversity score by year.
+
+    Parameters:
+    - ag_dvar: The agricultural decision variable.
+    - am_dvar: The agricultural management decision variable.
+    - non_ag_dvar: The non-agricultural decision variable.
+    - bio_shards: The biodiversity shards.
+    - interp_year: The year for interpolation.
+    - para_obj: The parallelization object.
+
+    Returns:
+    - out: The calculated biodiversity score by year, excluding the 'spatial_ref' column.
+    """
+    tasks = [delayed(xr_to_df)(bio_score, ag_dvar, am_dvar, non_ag_dvar) for bio_score in bio_shards]
+    out = pd.concat([out for out in tqdm(para_obj(tasks), total=len(tasks))], ignore_index=True)
+    return out.drop(columns=['spatial_ref'])
+
 
 

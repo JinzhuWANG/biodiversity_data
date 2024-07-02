@@ -10,7 +10,7 @@ from itertools import product
 from joblib import Parallel, delayed
 from codes.fake_func import Data
 from luto.ag_managements import AG_MANAGEMENTS_TO_LAND_USES
-from codes import (ag_to_xr, non_ag_to_xr, am_to_xr, 
+from codes import (ag_to_xr, cal_bio_score_by_yr, non_ag_to_xr, am_to_xr, 
                    ag_dvar_to_bio_map, non_ag_dvar_to_bio_map, am_dvar_to_bio_map,
                    calc_bio_hist_sum, calc_bio_score_species, interp_bio_species_to_shards)
 
@@ -42,48 +42,6 @@ non_ag_dvar = non_ag_dvar_to_bio_map(data, non_ag_dvar, res_factor, para_obj).ch
 
 
 
-# Helper functions to calculate the biodiversity contribution scores
-def xr_to_df(shard, dvar_ag, dvar_am, dvar_non_ag):
-    
-    # Get the values to avoid duplicate computation
-    if isinstance(shard, tuple):            # This means shard is a tuple of delayed function and arguments
-        f, args = shard[0], shard[1]
-        shard_xr = f(*args)
-    elif isinstance(shard, xr.DataArray):   # This means shard is an xr.DataArray
-        shard_xr = shard.compute()
-    else:
-        raise ValueError('Invalid shard type! Should be either tuple (delayed(function), args) or xr.DataArray.')
-
-    # Calculate the biodiversity contribution scores
-    tmp_ag = (shard_xr * dvar_ag).compute().sum(['x', 'y'])
-    tmp_am = (shard_xr * dvar_am).compute().sum(['x', 'y'])
-    tmp_non_ag = (shard_xr * dvar_non_ag).compute().sum(['x', 'y'])
-    
-    # Convert to dense array
-    tmp_ag.data = tmp_ag.data.todense()
-    tmp_am.data = tmp_am.data.todense()
-    tmp_non_ag.data = tmp_non_ag.data.todense()
-    
-    # Convert to dataframe
-    tmp_ag_df = tmp_ag.to_dataframe(name='contribution_%').reset_index()
-    tmp_am_df = tmp_am.to_dataframe(name='contribution_%').reset_index()
-    tmp_non_ag_df = tmp_non_ag.to_dataframe(name='contribution_%').reset_index()
-    
-    # Add land use type
-    tmp_ag_df['lu_type'] = 'ag'
-    tmp_am_df['lu_type'] = 'am'
-    tmp_non_ag_df['lu_type'] = 'non_ag'
-    
-    return pd.concat([tmp_ag_df, tmp_am_df, tmp_non_ag_df], ignore_index=True)
-
-
-def cal_bio_score_by_yr(bio_shards, interp_year, para_obj=para_obj):
-    tasks = [delayed(xr_to_df)(bio_score, ag_dvar, am_dvar, non_ag_dvar) for bio_score in bio_shards]
-    out = pd.concat([out for out in tqdm(para_obj(tasks), total=len(tasks))], ignore_index=True)
-    return out.drop(columns=['spatial_ref'])
-
-
-
 # Calculate the biodiversity contribution scores
 if settings.BIO_CALC_LEVEL == 'group':
     bio_score_group = xr.open_dataarray(f'{settings.INPUT_DIR}/bio_ssp{settings.SSP}_Condition_group.nc', chunks='auto')
@@ -97,16 +55,5 @@ else:
     raise ValueError('Invalid settings.BIO_CALC_LEVEL! Must be either "group" or "species".')
 
 
+bio_df = cal_bio_score_by_yr(ag_dvar, am_dvar, non_ag_dvar, bio_contribution_shards, interp_year, para_obj)
 
-bio_df = cal_bio_score_by_yr(bio_contribution_shards[:2], interp_year)
-
-
-# Export bio scores to geotiff for validation
-if __name__ == '__main__':
-    
-    
-    toy_bio_raw = np.random.randint(0,100,size=(4,5,5))
-    toy_bio_contribution = toy_bio_raw / toy_bio_raw.sum()
-    
-    toy_bio_group = toy_bio_contribution.mean(axis=0)
-    toy_bio_group.sum()
