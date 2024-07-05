@@ -64,56 +64,54 @@ def non_ag_to_xr(data, dvar):
     return non_ag_dvar_xr.reindex(lu=data.NON_AGRICULTURAL_LANDUSES)
 
 
-def get_bio_cells(bio_map:xr.open_dataarray, crs:str='epsg:4283') -> gpd.GeoDataFrame:
+def get_id_gdf(ds:xr.DataArray, crs:str='epsg:4283') -> gpd.GeoDataFrame:
     """
     Vectorize a biodiversity map to individual cells.
 
     Parameters:
-    bio_map (xr.open_dataarray): The biodiversity map as an xarray DataArray.
+    ds (xr.DataArray): The biodiversity map as an xarray DataArray. Must be a 2D xarray with `transform` metadata.
     crs (str, optional): The coordinate reference system of the output GeoDataFrame. Defaults to 'epsg:4283' (GDA 1994).
 
     Returns:
-    tuple: A tuple containing the cell map array and its vectorized GeoDataFrame of each cell.
+    gpd.GeoDataFrame: A GeoDataFrame representing the unique id of each cell in the input `ds`. E.g., if the ds 
+    is of size 100x100 (y*x), then the id_gdf will be 10000 rows, and each row will be a rectagle covering the cell,
+    and has a unique value starting from 0 to 9999 in the row-by-row order.
+    
+    The columns of the GeoDataFrame are:
+    - geometry: The rectangle representing the coverage of cells.
+    - cell_id: The unique cell index. 
     """
 
     # Load a biodiversity map template to retrieve the geo-information
-    transform = bio_map.rio.transform()
-    src_arr = bio_map.values
+    transform = ds.rio.transform()
+    src_arr = ds.values
     
     # Vectorize the map, each cell will have a unique id as the value    
     cell_map_arr = np.arange(src_arr.size).reshape(src_arr.shape)
-    cells = ({'properties': {'cell_id': v}, 'geometry': s} for s, v in shapes(cell_map_arr, transform=transform))
-    return cell_map_arr, gpd.GeoDataFrame.from_features(list(cells)).set_crs(crs)
+    cells = ({'properties': {'cell_id': int(v)}, 'geometry': s} for s, v in shapes(cell_map_arr, transform=transform))
+    return gpd.GeoDataFrame.from_features(list(cells)).set_crs(crs)
 
 
 
-def coord_to_points(coord_path:str, crs:str='epsg:4283') -> gpd.GeoDataFrame:
-    """
-    Convert coordinate data to a GeoDataFrame of points.
-
-    Parameters:
-    coord_path (str): The file path to the coordinate data.
-    crs (str): The coordinate reference system (CRS) of the points. Default is 'epsg:4283' (GDA 1994).
-
-    Returns:
-    gpd.GeoDataFrame: A GeoDataFrame containing the points.
-
-    """
-    coord_lon_lat = np.load(coord_path)
-    return gpd.GeoDataFrame(geometry=gpd.points_from_xy(coord_lon_lat[0], coord_lon_lat[1])).set_crs(crs)
 
 
 
 def sjoin_cell_point(cell_df:gpd.GeoDataFrame, points_gdf:gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """
-    Spatially joins a GeoDataFrame of cells with a GeoDataFrame of points.
+    Spatially joins a GeoDataFrame of rectangle cells with a GeoDataFrame of points. Only the rectangle cells that
+    have at least one point inside are kept. The rows of `cell_df` will be duplicated if they have multiple points inside.
+    E.g., if a cell has 3 points inside, then the cell will be duplicated 3 times in the output GeoDataFrame. However,
+    These duplicated cells will have the same `cell_id` but different `point_id`.
 
     Parameters:
-    - cell_df (gpd.GeoDataFrame): The GeoDataFrame of cells.
+    - cell_df (gpd.GeoDataFrame): The GeoDataFrame of rectangel cells.
     - points_gdf (gpd.GeoDataFrame): The GeoDataFrame of points.
 
     Returns:
-    - joined_gdf (gpd.GeoDataFrame): The joined GeoDataFrame with the cells and points.
+    joined_gdf (gpd.GeoDataFrame): The joined GeoDataFrame with the cells and points. The columns are:
+    - geometry: The centroid of the cell.
+    - cell_id: The unique cell index.
+    - point_id: The unique point index.
 
     """
     joined_gdf = gpd.sjoin(cell_df, points_gdf, how='left').dropna(subset=['index_right'])
@@ -128,9 +126,16 @@ def mask_cells(ds: xr.Dataset, cell_arr: np.ndarray, joined_gdf: gpd.GeoDataFram
     Masks the cells in a dataset based on a given array of cell indices.
 
     Parameters:
-        ds (xr.Dataset): The input dataset.
-        cell_arr (np.ndarray): Array of cell indices.
-        joined_gdf (gpd.GeoDataFrame): GeoDataFrame containing cell IDs.
+        - ds (xr.Dataset): The input dataset. An xarray Dataset with `x` and `y` as the controid of each cell.
+        - cell_arr (np.ndarray): Array of cell indices for the input `ds`. E.g., if the ds arrary is 100x100, 
+          then the id_arr is of the same shape, and each cell has a unique value starting 
+          from 0 to 9999 from row-by-row order
+        - joined_gdf (gpd.GeoDataFrame): GeoDataFrame of overlapping a map with LUTO_input_coords.
+          We can think of this as a spatial join between a map and many points; and each row in the joined_gdf
+          represents a cell of at least having one point inside. The columns are:
+            - geometry: The centroid of the cell.
+            - cell_id: The unique cell index.
+            - point_id: The unique point index.
 
     Returns:
         xr.Dataset: The masked dataset with cells filtered based on the given indices.
@@ -484,21 +489,21 @@ def xr_to_df(shard, dvar_ag, dvar_am, dvar_non_ag):
     return pd.concat([tmp_ag_df, tmp_am_df, tmp_non_ag_df], ignore_index=True)
 
 
-def cal_bio_score_by_yr(ag_dvar, am_dvar, non_ag_dvar, bio_shards, interp_year, para_obj):
+def calc_bio_score_by_yr(ag_dvar, am_dvar, non_ag_dvar, bio_shards, para_obj):
     """
     Calculate biodiversity score by year.
 
     Parameters:
-    - ag_dvar: The agricultural decision variable.
-    - am_dvar: The agricultural management decision variable.
-    - non_ag_dvar: The non-agricultural decision variable.
+    - ag_dvar: The agricultural variable.
+    - am_dvar: The agricultural management variable.
+    - non_ag_dvar: The non-agricultural variable.
     - bio_shards: The biodiversity shards.
-    - interp_year: The year for interpolation.
     - para_obj: The parallelization object.
 
     Returns:
-    - out: The calculated biodiversity score by year, excluding the 'spatial_ref' column.
+    - The calculated biodiversity score by year, excluding the 'spatial_ref' column.
     """
+    
     tasks = [delayed(xr_to_df)(bio_score, ag_dvar, am_dvar, non_ag_dvar) for bio_score in bio_shards]
     out = pd.concat([out for out in tqdm(para_obj(tasks), total=len(tasks))], ignore_index=True)
     return out.drop(columns=['spatial_ref'])

@@ -11,10 +11,8 @@ from codes import calc_bio_hist_sum, calc_bio_score_group, interp_bio_group_to_s
 
 # Read in fake data
 max_workers = 30        # ~70% utilization for a 256-core CPU
-interp_year = [2040]
 encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'float32'}}
 para_obj = Parallel(n_jobs=max_workers, return_as='generator')
-
 bio_raw_ncs = glob(f'{settings.INPUT_DIR}/*EnviroSuit.nc')
 
   

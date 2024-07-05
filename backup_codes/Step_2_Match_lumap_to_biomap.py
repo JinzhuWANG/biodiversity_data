@@ -8,7 +8,7 @@ import luto.settings as settings
 from tqdm.auto import tqdm
 from itertools import product
 from joblib import Parallel, delayed
-from codes import bincount_avg, get_bio_cells, get_id_map_by_upsample_reproject
+from codes import bincount_avg, get_id_arr_gdf, get_id_map_by_upsample_reproject
 
 
 # Parameters
@@ -23,7 +23,7 @@ bio_mask['spatial_ref'] = bio_mask_ds['spatial_ref']
 
 # Calculate the area of each cell in the bio_mask
 if not os.path.exists(f'{settings.INPUT_DIR}/bio_cell_area_ha.nc'):
-    cell_arr, cell_df = get_bio_cells(bio_mask)
+    cell_arr, cell_df = get_id_arr_gdf(bio_mask)
     cell_df_albers = cell_df.to_crs('EPSG:3577')                # GDA94 / Australian Albers
     cell_df_albers['area'] = cell_df_albers.area / 10000        # m2 to ha
     area_arr = cell_df_albers['area'].values.reshape(cell_arr.shape)

@@ -5,17 +5,16 @@ import pandas as pd
 import luto.settings as settings
 
 from itertools import product
-from codes.helper_func import get_all_path, replace_mask_with_nearest
+from codes.helper_func import get_all_path, replace_with_nearest
 from tqdm.auto import tqdm
-from glob import glob
 from joblib import Parallel, delayed
 
 
 # Search for all tif files and save to their paths to a csv file
 bio_path_raw = 'N:/Data-Master/Biodiversity/Environmental-suitability/Annual-species-suitability_20-year_snapshots_5km'
-if not os.path.exists('data/bio_file_paths_raw.csv'):
+if not os.path.exists(f'{settings.INPUT_DIR}/bio_file_paths_raw.csv'):
     get_all_path(bio_path_raw, 'data/bio_file_paths_condition.csv')
-df = pd.read_csv('data/bio_file_paths_raw.csv' )
+df = pd.read_csv(f'{settings.INPUT_DIR}/bio_file_paths_raw.csv' )
 
 
 # Create an tempalate nc file for biodiversity data
@@ -23,16 +22,12 @@ NLUM = rxr.open_rasterio(f'{settings.INPUT_DIR}/NLUM_2010-11_mask.tif').squeeze(
 bio_mask = rxr.open_rasterio(df.iloc[0]['path']).squeeze('band').drop_vars('band').astype('uint8')
 bio_mask = xr.where(bio_mask != bio_mask.rio.nodata, 1, 0).astype('uint8').chunk('auto')
 bio_mask = bio_mask.rio.write_crs(NLUM.rio.crs)
-
-
 bio_mask.name = 'data'
 bio_mask.to_netcdf(
     f'{settings.INPUT_DIR}/bio_mask.nc', 
     mode='w', 
     encoding={'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'uint8'}},
     engine='h5netcdf')
-
-
 
 
 # Filter out the ensemble data
@@ -42,13 +37,14 @@ historic_df = df.query('model == "historic" and species.isin(@valid_species) and
 
 
 # Define the function to convert tif to nc
-def process_row(row):
+def process_row(row,bio_mask=bio_mask):
     ds = rxr.open_rasterio(row['path']).sel(band=1).drop_vars('band')
-    ds.values = replace_mask_with_nearest(ds.values, ~bio_mask.values).astype('uint8')
-    ds = ds.expand_dims({'year':[row['year']], 'species':[row['species']], 'group':[row['group']]})
+    ds.values = replace_with_nearest(ds.values, ds.rio.nodata).astype('uint8')
+    ds = ds.expand_dims({'year':[row['year']], 'species':[row['species']]})
+    ds = ds.assign_coords(group=('species', [row['group']]))    # Add group as a coordinate, which attatchs to the species dim
     ds['x'] = bio_mask['x']
     ds['y'] = bio_mask['y']
-    return ds.squeeze('group')  # Drop the group dimension, but keep the group as a coordinate
+    return ds  
 
 
 def tif_to_nc(df, ssp, mode):
@@ -59,7 +55,7 @@ def tif_to_nc(df, ssp, mode):
     return [result for result in tqdm(para_obj(tasks), total=len(in_df))]
 
         
-# Save ensemble data to nc      
+# Save ensemble data to nc !!!!!!!!!! This will take ~8 hours to run !!!!!!!!!!      
 historic_xr = tif_to_nc(historic_df, 'historic', 'historic')
 for ssp, mode in product(ensemble_df['ssp'].unique(), ensemble_df['mode'].unique()):
     # Pass if the file already exists
