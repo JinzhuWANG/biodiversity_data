@@ -189,12 +189,12 @@ def get_id_map_by_upsample_reproject(low_res_map, high_res_map):
     
 
 
-def bincount_avg(mask_arr, weight_arr, low_res_xr: xr.DataArray=None):
+def bincount_avg(bin_arr, weight_arr, low_res_xr: xr.DataArray=None):
     """
     Calculate the average of weighted values based on bin counts.
 
     Parameters:
-    - mask_arr (2D, xarray.DataArray): Array containing the mask values. 
+    - bin_arr (2D, xarray.DataArray): Array containing the mask values. 
     - weight_arr (2D, xarray.DataArray, >0 values are valid): Array containing the weight values.
     - low_res_xr (2D, xarray.DataArray): Low-resolution array containing 
         `y`, `x`, `CRS`, and `transform` to restore the bincount stats.
@@ -202,9 +202,16 @@ def bincount_avg(mask_arr, weight_arr, low_res_xr: xr.DataArray=None):
     Returns:
     - bin_avg (xarray.DataArray): Array containing the average values based on bin counts.
     """
-    bin_sum = np.bincount(mask_arr.values.flatten(), weights=weight_arr.values.flatten(), minlength=low_res_xr.size)
-    bin_occ = np.bincount(mask_arr.values.flatten(), minlength=low_res_xr.size)
-
+    # Get the valide cells
+    valid_mask = weight_arr > 0
+    
+    # Flatten arries
+    bin_flatten = bin_arr.values[valid_mask]
+    weights_flatten = weight_arr.values[valid_mask]
+    
+    bin_occ = np.bincount(bin_flatten, minlength=low_res_xr.size)
+    bin_sum = np.bincount(bin_flatten, weights=weights_flatten, minlength=low_res_xr.size)
+    
     # Take values up to the last valid index, because the index of `low_res_xr.size + 1` indicates `NODATA`
     bin_sum = bin_sum[:low_res_xr.size + 1]     
     bin_occ = bin_occ[:low_res_xr.size + 1]     
@@ -236,32 +243,29 @@ def match_lumap_biomap(
     data:Data, 
     map_:np.ndarray, 
     res_factor:int, 
+    bio_id_path:str=f'{settings.INPUT_DIR}/bio_id_map.nc',
     lumap_tempelate:str=f'{settings.INPUT_DIR}/NLUM_2010-11_mask.tif', 
     biomap_tempelate:str=f'{settings.INPUT_DIR}/bio_mask.nc')-> xr.DataArray:
     """
-    Matches the map_ to the same projection and resolution as of biomap templates.
-    
-    If the map_ is not in the same resolution as the biomap, it will be upsampled to (1km x 1km) first.
-    
-    The resampling method is set to average, because the map_ is assumed to be the decision variables (float), 
-    representing the percentage of a given land-use within the cell.
+    Matches the lumap and biomap data based on the given parameters.
 
-    Parameters:
-    - data (Data): The data object containing necessary information.
-    - map_ (1D, np.ndarray): The map to be matched.
-    - res_factor (int): The resolution factor.
-    - lumap_tempelate (str): The path to the lumap template file. Default is f'{settings.INPUT_DIR}/NLUM_2010-11_mask.tif'.
-    - biomap_tempelate (str): The path to the biomap template file. Default is f'{settings.INPUT_DIR}/bio_mask.nc'.
+    Args:
+        data (Data): The data object.
+        map_ (np.ndarray): The map array.
+        res_factor (int): The resolution factor.
+        bio_id_path (str, optional): The path to the bio id map. Defaults to f'{settings.INPUT_DIR}/bio_id_map.nc'.
+        lumap_tempelate (str, optional): The path to the lumap template. Defaults to f'{settings.INPUT_DIR}/NLUM_2010-11_mask.tif'.
+        biomap_tempelate (str, optional): The path to the biomap template. Defaults to f'{settings.INPUT_DIR}/bio_mask.nc'.
 
     Returns:
-    - xr.DataArray: The matched map.
-
+        xr.DataArray: The matched map array.
     """
-    
+    # Read lumap, bio_map, and bio_id_map
     NLUM = rxr.open_rasterio(lumap_tempelate, chunks='auto').squeeze('band').drop_vars('band')
     bio_mask_ds = xr.open_dataset(f'{settings.INPUT_DIR}/bio_mask.nc', decode_coords="all")
     bio_map = bio_mask_ds['data']
     bio_map['spatial_ref'] = bio_mask_ds['spatial_ref']
+    bio_id_map = xr.open_dataset(bio_id_path, chunks='auto')['data']
         
     if res_factor > 1:   
         map_ = get_coarse2D_map(data, map_)
@@ -269,15 +273,13 @@ def match_lumap_biomap(
     else:
         empty_map = np.full(data.NLUM_MASK.shape, data.NODATA).astype(np.float32) 
         np.place(empty_map, data.NLUM_MASK, data.LUMAP_NO_RESFACTOR) 
-        np.place(empty_map, empty_map >=0, map_)
+        np.place(empty_map, empty_map >=0, map_.data.todense())
         map_ = empty_map
         
     map_ = xr.DataArray(map_, dims=('y','x'), coords={'y': NLUM['y'], 'x': NLUM['x']})
     map_ = map_.where(map_>=0, 0)
     map_ = map_.rio.write_crs(NLUM.rio.crs)
     map_ = map_.rio.write_transform(NLUM.rio.transform())  
-    
-    bio_id_map = get_id_map_by_upsample_reproject(bio_map, NLUM, )
     map_ = bincount_avg(bio_id_map, map_,  bio_map)
     map_ = map_.where(map_ != map_.rio.nodata, 0)
     return map_
@@ -378,14 +380,14 @@ def non_ag_dvar_to_bio_map(data, non_ag_dvar, res_factor, para_obj):
 def calc_bio_hist_sum(bio_nc_path:str):
     bio_xr_raw = xr.open_dataset(bio_nc_path, chunks='auto')['data']
     encoding = {'data': {"compression": "gzip", "compression_opts": 9,  "dtype": 'uint64'}}
-    bio_xr_mask = xr.open_dataset(f'{settings.INPUT_DIR}/bio_mask.nc', chunks='auto')['data'].astype(np.bool_)
+    bio_xr_mask = xr.open_dataset('data/bio_mask.nc', chunks='auto')['data'].astype(np.bool_)
     
     # Get the sum of all historic cells, !!! important !!! need to mask out the cells that are not in the bio_mask 
-    if os.path.exists(f'{settings.INPUT_DIR}/bio_xr_hist_sum_species.nc'):
-        bio_xr_hist_sum_species = xr.open_dataarray(f'{settings.INPUT_DIR}/bio_xr_hist_sum_species.nc', chunks='auto') 
+    if os.path.exists('data/bio_xr_hist_sum_species.nc'):
+        bio_xr_hist_sum_species = xr.open_dataarray(f'data/bio_xr_hist_sum_species.nc', chunks='auto') 
     else:
         bio_xr_hist_sum_species = (bio_xr_raw.sel(year=1990).astype('uint64') * bio_xr_mask).sum(['x', 'y']).compute()
-        bio_xr_hist_sum_species.to_netcdf(f'{settings.INPUT_DIR}/bio_xr_hist_sum_species.nc', mode='w', encoding=encoding, engine='h5netcdf')   
+        bio_xr_hist_sum_species.to_netcdf('data/bio_xr_hist_sum_species.nc', mode='w', encoding=encoding, engine='h5netcdf')   
     return bio_xr_hist_sum_species
 
 
@@ -431,11 +433,37 @@ def interp_by_year(ds, year:list[int]):
     return ds.interp(year=year, method='linear', kwargs={'fill_value': 'extrapolate'}).astype(np.float32).compute()
 
 def interp_bio_species_to_shards(bio_contribution_species, interp_year, max_workers=settings.THREADS):
+    """
+    Interpolates biodiversity data for different species to shards.
+
+    Parameters:
+    - bio_contribution_species: xarray.Dataset
+        The biodiversity data for different species.
+    - interp_year: list
+        The years for which the data needs to be interpolated.
+    - max_workers: int, optional
+        The maximum number of workers to use for parallel processing. Defaults to settings.THREADS.
+
+    Returns:
+    - list
+        A list of delayed objects representing the interpolation of biodiversity data for each species at interp_year.
+    """
     chunks_species = np.array_split(range(bio_contribution_species['species'].size), max_workers)
     bio_xr_chunks = [bio_contribution_species.isel(species=idx) for idx in chunks_species]
     return [delayed(interp_by_year)(chunk, [yr]) for chunk in bio_xr_chunks for yr in interp_year]
 
+
 def interp_bio_group_to_shards(bio_contribution_group, interp_year):
+    """
+    Interpolates the biodiversity contribution group to shards for the given interpolation years.
+
+    Parameters:
+    - bio_contribution_group (list): List of biodiversity contribution values for a group.
+    - interp_year (list): List of years for interpolation.
+
+    Returns:
+    - List of delayed objects representing the interpolation of biodiversity data for each group at interp_year.
+    """
     return [delayed(interp_by_year)(bio_contribution_group, [year]) for year in interp_year]
 
 

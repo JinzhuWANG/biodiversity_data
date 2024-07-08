@@ -11,6 +11,7 @@ from codes import get_id_gdf, sjoin_cell_point
 # Read in lon/lat points of resfactor 1; Pretend they are loaded from LUTO `Data` object
 '''The `coord_x` and `coord_y` are the lon/lat points of the LUTO input data, 
 which were taken from the `Data.COORD_LON_LAT`.'''
+luto_mask = np.load('data/coord/LUTO_MASK_res1.npy')
 coord_x = np.load('data/coord/coord_res1_x.npy')
 coord_y = np.load('data/coord/coord_res1_y.npy')
 coord_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(coord_x, coord_y)).set_crs('epsg:4283')
@@ -38,5 +39,6 @@ if not os.path.exists(f'{settings.INPUT_DIR}/bio_valid_cells.geojson'):
     valide_cells.to_file(f'{settings.INPUT_DIR}/bio_valid_cells.geojson', driver='GeoJSON')
     
     
+
 
 
